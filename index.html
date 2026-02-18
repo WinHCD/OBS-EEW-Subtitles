@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>预警OBS版-最终完整版</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="alert-scroll-container" id="mainScrollContainer">
+        <div class="scroll-wrapper" id="mainScrollWrapper">
+            <div class="scroll-item alert-item" data-index="0">
+                <span class="data-type-tag tag-alert" id="alertTag">地震预警</span>
+                <div class="content-wrap" id="alertContentWrap">
+                    <div class="line-item"><div class="line-text">暂无地震预警数据</div></div>
+                </div>
+            </div>
+            <div class="scroll-item measure-item" data-index="1">
+                <span class="data-type-tag tag-measure" id="measureTag">台网测定</span>
+                <div class="content-wrap" id="measureContentWrap">
+                    <div class="line-item"><div class="line-text">暂无台网测定数据</div></div>
+                </div>
+            </div>
+            <div class="scroll-item intensity-item" data-index="2">
+                <span class="data-type-tag tag-intensity" id="intensityTag">烈度速报</span>
+                <div class="content-wrap" id="intensityContentWrap">
+                    <div class="line-item"><div class="line-text">暂无烈度速报数据</div></div>
+                </div>
+            </div>
+            <div class="scroll-item tsunami-item" data-index="3">
+                <span class="data-type-tag tag-tsunami" id="tsunamiTag">海啸预警</span>
+                <div class="content-wrap single-line" id="tsunamiContentWrap">
+                    <div class="line-item"><div class="line-text">暂无海啸预警数据</div></div>
+                </div>
+            </div>
+            <div class="scroll-item weather-item" data-index="4">
+                <span class="data-type-tag tag-weather" id="weatherTag">气象预警</span>
+                <div class="content-wrap" id="weatherContentWrap">
+                    <div class="line-item"><div class="line-text">暂无气象预警数据</div></div>
+                </div>
+            </div>
+            <div class="scroll-item app-info-item" data-index="5">
+                <div class="content-wrap single-line" id="appInfoContentWrap">
+                    <div class="line-item"><div class="line-text">所有地震预警信息均为公开信息，最终结果请以当地官方正式测定结果为准。直播间基本无人值守。地震不可准确预测，不要盼震盼灾，请理性讨论。 应用信息【左上：TREM Lite；左下：要石；右上：EQuake；右下：GlobalQuake（根据台站信息自动测算，精度有限）】所有应用均可自行下载。</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="config.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
