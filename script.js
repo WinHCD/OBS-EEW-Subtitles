@@ -224,25 +224,27 @@ function startLineScroll(lineText, lineItem) {
         lineText.style.webkitTransform = `translate3d(${newPosition}px, 0, 0)`;
         
         if (progress < 1) {
-            animationIds[lineItemId] = requestAnimationFrame(animate);
-        } else {
-            // 滚动结束
-            lineText.style.transform = "";
-            lineText.style.webkitTransform = "";
-            // 清除will-change属性
-            lineText.style.willChange = "";
-            curScrollingLines = curScrollingLines.filter(item => item !== lineItem);
-            isScrolling = false;
-            
-            // 清除动画ID
-            delete animationIds[lineItemId];
-            
-            setTimeout(() => {
-                if (!isForcedShow && curScrollingLines.length === 0) {
-                    doPageTurn();
+                animationIds[lineItemId] = requestAnimationFrame(animate);
+            } else {
+                // 滚动结束
+                lineText.style.transform = "";
+                lineText.style.webkitTransform = "";
+                // 清除will-change属性
+                lineText.style.willChange = "";
+                curScrollingLines = curScrollingLines.filter(item => item !== lineItem);
+                isScrolling = false;
+                
+                // 清除动画ID
+                if (animationIds[lineItemId]) {
+                    delete animationIds[lineItemId];
                 }
-            }, 100);
-        }
+                
+                setTimeout(() => {
+                    if (!isForcedShow && curScrollingLines.length === 0) {
+                        doPageTurn();
+                    }
+                }, 100);
+            }
     }
     
     // 开始动画
@@ -691,11 +693,19 @@ function generateInfoText(info) {
         return "";
     }
     let processedInfo = info.trim();
-    // 移除最后的标点符号（包括英文标点）
-    processedInfo = processedInfo.replace(/[，。；！？、.,;!?]$/, "");
-    // 替换剩余的英文标点为中文标点
-    processedInfo = processedInfo.replace(/\./g, "，").replace(/,/g, "，").replace(/;/g, "；");
-    return processedInfo + "。";
+    // 替换英文标点为中文标点
+    processedInfo = processedInfo
+        .replace(/\./g, "。")
+        .replace(/,/g, "，")
+        .replace(/;/g, "；")
+        .replace(/!/g, "！")
+        .replace(/\?/g, "？")
+        .replace(/:/g, "：")
+        .replace(/"/g, "“")
+        .replace(/'/g, "‘")
+        .replace(/\(/g, "（")
+        .replace(/\)/g, "）");
+    return processedInfo;
 }
 
 // 生成台站信息文本
@@ -1109,8 +1119,27 @@ function clearMemory() {
     }
     
     // 清理动画ID（只清理已完成的动画，保留正在进行中的动画）
-    // 注意：不再清理animationIds，因为这会导致正在进行的滚动动画停止
-
+    // 检查动画ID对应的元素是否存在，不存在则清理
+    Object.keys(animationIds).forEach(id => {
+        const lineItem = document.querySelector(`[data-animation-id="${id}"]`);
+        if (!lineItem) {
+            delete animationIds[id];
+        }
+    });
+    
+    // 清理DOM缓存中不再需要的缓存
+    if (Object.keys(domCache).length > 100) {
+        // 保留当前页面和相邻页面的DOM缓存，清理其他页面的缓存
+        const currentPageKey = `${currentPage}_`;
+        const prevPageKey = `${(currentPage - 1 + totalPage) % totalPage}_`;
+        const nextPageKey = `${(currentPage + 1) % totalPage}_`;
+        
+        Object.keys(domCache).forEach(key => {
+            if (!key.startsWith(currentPageKey) && !key.startsWith(prevPageKey) && !key.startsWith(nextPageKey)) {
+                delete domCache[key];
+            }
+        });
+    }
 }
 
 /**
@@ -1152,26 +1181,32 @@ function checkNetworkStatus() {
  * 启动网络状态监听
  * 监听网络连接和断开事件，并在网络状态变化时采取相应措施
  */
+// 网络连接事件处理函数
+function handleOnlineEvent() {
+    console.log('✅ 网络已连接');
+    // 网络恢复时，尝试重连WebSocket
+    if (!webSocket || webSocket.readyState === 3) {
+        console.log('正在重连主WebSocket...');
+        initWebSocket();
+    }
+    if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
+        console.log('正在重连烈度速报WebSocket...');
+        initIntensityWss();
+    }
+}
+
+// 网络断开事件处理函数
+function handleOfflineEvent() {
+    console.log('❌ 网络已断开');
+    // 网络断开时，可以暂停某些操作或显示提示
+}
+
 function startNetworkMonitor() {
     // 监听网络连接事件
-    window.addEventListener('online', function() {
-        console.log('✅ 网络已连接');
-        // 网络恢复时，尝试重连WebSocket
-        if (!webSocket || webSocket.readyState === 3) {
-            console.log('正在重连主WebSocket...');
-            initWebSocket();
-        }
-        if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
-            console.log('正在重连烈度速报WebSocket...');
-            initIntensityWss();
-        }
-    });
+    window.addEventListener('online', handleOnlineEvent);
     
     // 监听网络断开事件
-    window.addEventListener('offline', function() {
-        console.log('❌ 网络已断开');
-        // 网络断开时，可以暂停某些操作或显示提示
-    });
+    window.addEventListener('offline', handleOfflineEvent);
     
     console.log('✅ 网络状态监听器已启动');
 }
@@ -1189,11 +1224,18 @@ window.onbeforeunload=()=>{
     intensityHttpRetryCount=0;
     intensityReconnectCount=0;
     
+    // 清理网络状态监听器
+    window.removeEventListener('online', handleOnlineEvent);
+    window.removeEventListener('offline', handleOfflineEvent);
+    
     // 清理所有动画
     Object.values(animationIds).forEach(id=>{
         if(id)cancelAnimationFrame(id);
     });
     animationIds={};
+    
+    // 清理DOM缓存
+    domCache={};
     
     // 清理DOM引用
     Object.keys(dom).forEach(key=>{
