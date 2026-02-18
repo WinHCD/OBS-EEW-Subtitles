@@ -11,6 +11,8 @@ let alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
 let wsIntensity=null,pingTimerIntensity=null,reconnectCountIntensity=0;
 let intHttpTimer=null,intHttpRetryCount=0;
 let isIntInited=false;
+let animationIds={}; // 动画ID管理
+let memoryCleanupTimer=null; // 内存清理定时器
 
 const dom={
     wrap:document.getElementById("mainScrollWrapper"),
@@ -42,8 +44,10 @@ const dom={
     initWebSocket();
     initIntensityHttp();
     initIntensityWss();
+    startMemoryCleanup(); // 启动内存清理定时器
     startPageLogic();
     console.log("✅ 预警OBS版初始化完成（包含最终烈度速报解析逻辑）");
+    console.log("✅ 内存清理机制已启动");
 })();
 
 function startPageLogic(){
@@ -116,6 +120,15 @@ function startLineScroll(lineText,lineItem){
     lineText.removeEventListener('animationend', ()=>{});
     lineText.removeEventListener('webkitAnimationEnd', ()=>{});
     
+    // 清除之前的动画ID
+    const lineItemId=lineItem.getAttribute('data-animation-id')||`anim_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
+    lineItem.setAttribute('data-animation-id',lineItemId);
+    
+    if(animationIds[lineItemId]){
+        cancelAnimationFrame(animationIds[lineItemId]);
+        delete animationIds[lineItemId];
+    }
+    
     // 计算容器宽度和元素宽度
     const containerWidth=lineItem.clientWidth;
     const contentWidth=lineText.scrollWidth;
@@ -145,13 +158,16 @@ function startLineScroll(lineText,lineItem){
         lineText.style.webkitTransform=`translate3d(${newPosition}px, 0, 0)`;
         
         if(progress<1){
-            requestAnimationFrame(animate);
+            animationIds[lineItemId]=requestAnimationFrame(animate);
         }else{
             // 滚动结束
             lineText.style.transform="";
             lineText.style.webkitTransform="";
             curScrollingLines=curScrollingLines.filter(item=>item!==lineItem);
             isScrolling = false;
+            
+            // 清除动画ID
+            delete animationIds[lineItemId];
             
             setTimeout(() => {
                 if(!isForcedShow && curScrollingLines.length === 0){
@@ -162,7 +178,7 @@ function startLineScroll(lineText,lineItem){
     }
     
     // 开始动画
-    requestAnimationFrame(animate);
+    animationIds[lineItemId]=requestAnimationFrame(animate);
 }
 
 function addTagBlink(page){
@@ -362,7 +378,22 @@ async function initIntensityHttp(){
     }catch(err){intHttpRetry()}
 }
 
-function closeIntWss(){if(wsIntensity){wsIntensity.close(1000,"烈度速报WSS主动关闭");wsIntensity=null}}
+function closeIntWss(){
+    if(wsIntensity){
+        try{
+            wsIntensity.close(1000,"烈度速报WSS主动关闭");
+            console.log("✅ 烈度速报WebSocket已关闭");
+        }catch(err){
+            console.error("关闭烈度速报WebSocket失败：",err);
+        }finally{
+            wsIntensity=null;
+        }
+    }
+    if(pingTimerIntensity){
+        clearInterval(pingTimerIntensity);
+        pingTimerIntensity=null;
+    }
+}
 
 function intWssRetry(){
     if(pingTimerIntensity)clearInterval(pingTimerIntensity);
@@ -375,22 +406,47 @@ function intWssRetry(){
 function initIntensityWss(){
     closeIntWss();
     try{
+        console.log("正在连接烈度速报WebSocket...");
         wsIntensity=new WebSocket(CONFIG.INT_WSS_REAL);
         wsIntensity.onopen=()=>{
+            console.log("✅ 烈度速报WebSocket连接成功");
             reconnectCountIntensity=0;
             isIntInited=true;
-            pingTimerIntensity=setInterval(()=>{if(wsIntensity.readyState===1)wsIntensity.send("ping")},5000);
+            pingTimerIntensity=setInterval(()=>{
+                if(wsIntensity&&wsIntensity.readyState===1){
+                    try{
+                        wsIntensity.send("ping");
+                    }catch(err){
+                        console.error("发送烈度速报ping失败：",err);
+                        clearInterval(pingTimerIntensity);
+                        if(wsIntensity&&wsIntensity.readyState!==3)wsIntensity.close();
+                    }
+                }
+            },5000);
         };
         wsIntensity.onmessage=e=>{
             if(!e.data || e.data === "ping" || !e.data.startsWith("{")) return;
             try{
                 const data=JSON.parse(e.data);
                 if(data?.eq_id) parseIntensityData(data,true);
-            }catch(err){}
+            }catch(err){
+                console.error("❌ 烈度速报数据解析失败：",err,"原始数据：",e.data);
+            }
         };
-        wsIntensity.onerror=()=>intWssRetry();
-        wsIntensity.onclose=e=>{if(e.code!==1000)intWssRetry()};
-    }catch(err){intWssRetry()}
+        wsIntensity.onerror=(error)=>{
+            console.error("❌ 烈度速报WebSocket错误：",error);
+            intWssRetry();
+        };
+        wsIntensity.onclose=e=>{
+            console.log(`烈度速报WebSocket关闭：${e.code} - ${e.reason}`);
+            clearInterval(pingTimerIntensity);
+            wsIntensity=null;
+            if(e.code!==1000)intWssRetry();
+        };
+    }catch(err){
+        console.error("❌ 烈度速报WebSocket初始化失败：",err);
+        intWssRetry();
+    }
 }
 
 // ====================== 最终优化的 parseIntensityData 函数（仅改此处！） ======================
@@ -508,18 +564,46 @@ function parseWeatherData(data){
 
 function initWebSocket(){
     clearInterval(pingTimer);
-    if(ws&&ws.readyState!==3)ws.close(1000,"重连清理");
+    if(ws&&ws.readyState!==3){
+        try{
+            ws.close(1000,"重连清理");
+        }catch(err){
+            console.error("WebSocket关闭失败：",err);
+        }
+        ws=null;
+    }
     try{
+        console.log("正在连接WebSocket...");
         ws=new WebSocket(CONFIG.WS_ALL);
         ws.onopen=()=>{
+            console.log("✅ WebSocket连接成功");
             reconnectCount=0;
             isInited=false;
             parseMeasureData.source="cenc";
             measureDataCache={};
             alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
             lastMeasure="";
-            setTimeout(()=>{if(ws.readyState===1)ws.send("query")},50);
-            pingTimer=setInterval(()=>{if(ws.readyState===1)ws.send("ping")},5000);
+            setTimeout(()=>{
+                if(ws&&ws.readyState===1){
+                    try{
+                        ws.send("query");
+                        console.log("已发送查询请求");
+                    }catch(err){
+                        console.error("发送查询请求失败：",err);
+                    }
+                }
+            },50);
+            pingTimer=setInterval(()=>{
+                if(ws&&ws.readyState===1){
+                    try{
+                        ws.send("ping");
+                    }catch(err){
+                        console.error("发送ping失败：",err);
+                        clearInterval(pingTimer);
+                        if(ws&&ws.readyState!==3)ws.close();
+                    }
+                }
+            },5000);
         };
         ws.onmessage=e=>{
             if(!e.data||!e.data.startsWith("{"))return;
@@ -527,23 +611,55 @@ function initWebSocket(){
                 const res=JSON.parse(e.data);
                 if(res.type==="initial_all"){
                     const initParseMap={"cea-pr":parseAlertData,"cea":parseAlertData,cenc:parseMeasureData,tsunami:parseTsunamiData,weatheralarm:parseWeatherData,ningxia:parseMeasureData,guangxi:parseMeasureData,shanxi:parseMeasureData,beijing:parseMeasureData};
-                    for(const [source,handler]of Object.entries(initParseMap)){if(res[source]&&res[source].Data){parseMeasureData.source=source;handler(res[source].Data, source)}}
+                    for(const [source,handler]of Object.entries(initParseMap)){
+                        if(res[source]&&res[source].Data){
+                            try{
+                                parseMeasureData.source=source;
+                                handler(res[source].Data, source);
+                            }catch(err){
+                                console.error(`处理${source}数据失败：`,err);
+                            }
+                        }
+                    }
                     isInited=true;
+                    console.log("✅ 初始数据加载完成");
                     return;
                 }
                 if(res.type==="update"&&res.source&&res.Data){
                     const parseMap={"cea-pr":parseAlertData,"cea":parseAlertData,cenc:parseMeasureData,tsunami:parseTsunamiData,weatheralarm:parseWeatherData,ningxia:parseMeasureData,guangxi:parseMeasureData,shanxi:parseMeasureData,beijing:parseMeasureData};
                     if(["cenc","ningxia","guangxi","shanxi","beijing"].includes(res.source))parseMeasureData.source=res.source;
-                    parseMap[res.source]&&parseMap[res.source](res.Data, res.source);
+                    try{
+                        parseMap[res.source]&&parseMap[res.source](res.Data, res.source);
+                    }catch(err){
+                        console.error(`处理${res.source}更新数据失败：`,err);
+                    }
                 }
-            }catch(err){console.error("❌ 数据解析失败：",err)}
+            }catch(err){
+                console.error("❌ 数据解析失败：",err,"原始数据：",e.data);
+            }
         };
-        ws.onclose=()=>{
+        ws.onclose=(event)=>{
+            console.log(`WebSocket关闭：${event.code} - ${event.reason}`);
+            clearInterval(pingTimer);
+            ws=null;
             const delay=Math.min(3000*Math.pow(2,reconnectCount++),30000);
+            console.log(`将在${delay}ms后尝试重连`);
             setTimeout(initWebSocket,delay);
         };
-        ws.onerror=()=>{if(ws.readyState!==3)ws.close()};
-    }catch(err){setTimeout(initWebSocket,3000)}
+        ws.onerror=(error)=>{
+            console.error("❌ WebSocket错误：",error);
+            if(ws&&ws.readyState!==3){
+                try{
+                    ws.close(1001,"错误重连");
+                }catch(err){
+                    console.error("WebSocket错误关闭失败：",err);
+                }
+            }
+        };
+    }catch(err){
+        console.error("❌ WebSocket初始化失败：",err);
+        setTimeout(initWebSocket,3000);
+    }
 }
 
 function clearTimer(){
@@ -555,9 +671,37 @@ function clearAllTimer(){
     if(intHttpTimer){clearTimeout(intHttpTimer);intHttpTimer=null}
 }
 
+// 内存清理函数
+function clearMemory(){
+    // 清理缓存数据
+    if(Object.keys(measureDataCache).length>100){
+        // 保留最新的10条数据
+        const keys=Object.keys(measureDataCache).sort((a,b)=>{
+            const timeA=measureDataCache[a].data.shockTime?new Date(measureDataCache[a].data.shockTime).getTime():0;
+            const timeB=measureDataCache[b].data.shockTime?new Date(measureDataCache[b].data.shockTime).getTime():0;
+            return timeB-timeA;
+        });
+        keys.slice(10).forEach(key=>delete measureDataCache[key]);
+    }
+    
+    // 清理动画ID
+    Object.values(animationIds).forEach(id=>{
+        if(id)cancelAnimationFrame(id);
+    });
+    animationIds={};
+}
+
+// 启动内存清理定时器
+function startMemoryCleanup(){
+    if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
+    // 每5分钟清理一次内存
+    memoryCleanupTimer=setInterval(clearMemory,5*60*1000);
+}
+
 window.onbeforeunload=()=>{
     clearInterval(pingTimer);
     clearAllTimer();
+    if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
     if(ws&&ws.readyState!==3)ws.close(1000,"页面关闭");
     measureDataCache={};
     alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
@@ -565,4 +709,21 @@ window.onbeforeunload=()=>{
     closeIntWss();
     intHttpRetryCount=0;
     reconnectCountIntensity=0;
+    
+    // 清理所有动画
+    Object.values(animationIds).forEach(id=>{
+        if(id)cancelAnimationFrame(id);
+    });
+    animationIds={};
+    
+    // 清理DOM引用
+    Object.keys(dom).forEach(key=>{
+        if(typeof dom[key]==='object' && dom[key]!==null){
+            if(Array.isArray(dom[key])){
+                dom[key]=[];
+            }else{
+                dom[key]=null;
+            }
+        }
+    });
 };
