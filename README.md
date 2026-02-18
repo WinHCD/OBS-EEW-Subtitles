@@ -14,7 +14,7 @@
 
 ### 快速开始：
 
-1. 克隆仓库或者下载源码包解压到本地
+1. 下载[Release页面（Github）](https://github.com/WinHCD/OBS-EEW-Subtitles/releases)或[发行版页面（Gitee）](https://gitee.com/damahoue/OBS-EEW-Subtitles/releases)中的源码包解压到本地
 2. 编辑 config.js 自定义设置，修改应用信息文本为自己需要的内容
 3. 在OBS中添加 index.html 为浏览器源
 4. 调整大小位置，开始接收预警字幕
