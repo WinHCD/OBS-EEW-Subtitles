@@ -97,7 +97,7 @@ function clearDOMCache(page) {
  * 负责处理页面滚动、动画等逻辑
  */
 function startPageLogic() {
-    if (isForcedShow || isScrolling || curScrollingLines.length > 0) return;
+    if (isScrolling || curScrollingLines.length > 0) return;
     clearTimer();
     
     const wrap = dom.contentWraps[currentPage];
@@ -131,7 +131,7 @@ function startPageLogic() {
         }
     });
     
-    if (!hasScrolling) {
+    if (!hasScrolling && !isForcedShow) {
         timer = setTimeout(doPageTurn, CONFIG.NO_OVERFLOW_DELAY);
     }
 }
@@ -768,10 +768,26 @@ function parseIntensityData(data, isRealTime) {
     // 检查是否有滚动动画在进行，如果有，等待滚动结束后再更新内容
     if (isScrolling || curScrollingLines.length > 0) {
         setTimeout(() => {
-            isRealTime ? renderRealTimeData(2, true, line1, line2) : renderHistoryData(2, true, line1, line2);
+            if (isRealTime) {
+                renderRealTimeData(2, true, line1, line2);
+            } else {
+                renderHistoryData(2, true, line1, line2);
+                // 对于历史数据，确保触发滚动检查
+                if (currentPage === 2) {
+                    startPageLogic();
+                }
+            }
         }, 1000);
     } else {
-        isRealTime ? renderRealTimeData(2, true, line1, line2) : renderHistoryData(2, true, line1, line2);
+        if (isRealTime) {
+            renderRealTimeData(2, true, line1, line2);
+        } else {
+            renderHistoryData(2, true, line1, line2);
+            // 对于历史数据，确保触发滚动检查
+            if (currentPage === 2) {
+                startPageLogic();
+            }
+        }
     }
 }
 // ==================================================================================
