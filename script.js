@@ -94,7 +94,7 @@ function clearDOMCache(page) {
  * 负责处理页面滚动、动画等逻辑
  */
 function startPageLogic() {
-    if (isForcedShow) return;
+    if (isForcedShow || isScrolling || curScrollingLines.length > 0) return;
     clearTimer();
     
     const wrap = dom.contentWraps[currentPage];
@@ -122,6 +122,7 @@ function startPageLogic() {
         if (isOverflow) {
             lineItem.classList.add("overflow");
             hasScrolling = true;
+            isScrolling = true;
             curScrollingLines.push(lineItem);
             startLineScroll(lineText, lineItem);
         }
@@ -137,7 +138,7 @@ function startPageLogic() {
  * 负责处理页面之间的切换逻辑
  */
 function doPageTurn() {
-    if (isForcedShow) return;
+    if (isForcedShow || isScrolling || curScrollingLines.length > 0) return;
     
     const nextPage = (currentPage + 1) % totalPage;
     dom.wrap.style.transform = `translate3d(0, ${-100*nextPage}%, 0)`;
@@ -757,7 +758,14 @@ function parseIntensityData(data, isRealTime) {
     const line1 = `中国地震台网中心烈度速报（更新时间：${intensityInfo.updateTime}）`;
     const line2 = `${intensityInfo.happenTime} ${intensityInfo.hypocenter} 发生<span class="highlight-num">${intensityInfo.mag.toFixed(1)}</span>级地震，震源深度<span class="highlight-num">${intensityInfo.depth}</span>公里，实测最大烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度，预测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度。${infoText}${stationsText}`;
 
-    isRealTime ? renderRealTimeData(2, true, line1, line2) : renderHistoryData(2, true, line1, line2);
+    // 检查是否有滚动动画在进行，如果有，等待滚动结束后再更新内容
+    if (isScrolling || curScrollingLines.length > 0) {
+        setTimeout(() => {
+            isRealTime ? renderRealTimeData(2, true, line1, line2) : renderHistoryData(2, true, line1, line2);
+        }, 1000);
+    } else {
+        isRealTime ? renderRealTimeData(2, true, line1, line2) : renderHistoryData(2, true, line1, line2);
+    }
 }
 // ==================================================================================
 
@@ -1077,11 +1085,9 @@ function clearMemory() {
         keys.slice(10).forEach(key => delete measureDataCache[key]);
     }
     
-    // 清理动画ID
-    Object.values(animationIds).forEach(id => {
-        if (id) cancelAnimationFrame(id);
-    });
-    animationIds = {};
+    // 清理动画ID（只清理已完成的动画，保留正在进行中的动画）
+    // 注意：不再清理animationIds，因为这会导致正在进行的滚动动画停止
+
 }
 
 /**
