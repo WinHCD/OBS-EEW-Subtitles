@@ -13,6 +13,8 @@ let intensityHttpTimer=null,intensityHttpRetryCount=0;
 let isIntensityInited=false;
 let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
+let intensityExpiryCheckTimer=null; // 烈度速报过期检查定时器
+let currentIntensityData=null; // 当前显示的烈度速报数据
 let domCache={}; // DOM节点缓存
 
 const dom={
@@ -60,6 +62,7 @@ const dom={
     }
     
     startMemoryCleanup();   // 启动内存清理定时器
+    startIntensityExpiryCheck(); // 启动烈度速报过期检查定时器
     startNetworkMonitor();  // 启动网络状态监听器
     startPageLogic();       // 启动页面逻辑
     
@@ -747,8 +750,12 @@ function parseIntensityData(data, isRealTime) {
 
     if (isExpiredData(data)) {
         renderHistoryData(2, false, "暂无烈度速报数据");
+        currentIntensityData = null;
         return;
     }
+
+    // 保存当前显示的烈度速报数据
+    currentIntensityData = data;
 
     const intensityInfo = extractIntensityInfo(data);
     const infoText = generateInfoText(data.info);
@@ -1094,6 +1101,23 @@ function clearMemory() {
  * 启动内存清理定时器
  * 每5分钟执行一次内存清理
  */
+// 检查烈度速报数据是否过期的函数
+function checkIntensityExpiry() {
+    if (currentIntensityData && isExpiredData(currentIntensityData)) {
+        console.log("⚠️  烈度速报数据已过期，清理显示");
+        renderHistoryData(2, false, "暂无烈度速报数据");
+        currentIntensityData = null;
+    }
+}
+
+// 启动烈度速报过期检查定时器
+function startIntensityExpiryCheck() {
+    if (intensityExpiryCheckTimer) clearInterval(intensityExpiryCheckTimer);
+    // 每10分钟检查一次是否过期
+    intensityExpiryCheckTimer = setInterval(checkIntensityExpiry, 10 * 60 * 1000);
+    console.log("✅ 烈度速报过期检查定时器已启动");
+}
+
 function startMemoryCleanup() {
     if (memoryCleanupTimer) clearInterval(memoryCleanupTimer);
     // 每5分钟清理一次内存
@@ -1140,6 +1164,7 @@ window.onbeforeunload=()=>{
     clearInterval(pingTimer);
     clearAllTimer();
     if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
+    if(intensityExpiryCheckTimer)clearInterval(intensityExpiryCheckTimer);
     if(webSocket&&webSocket.readyState!==3)webSocket.close(1000,"页面关闭");
     measureDataCache={};
     alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
