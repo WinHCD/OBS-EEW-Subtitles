@@ -1,16 +1,16 @@
 
 
-let ws=null,pingTimer=null,reconnectCount=0;
-let curPage=0,totalPage=6;
+let webSocket=null,pingTimer=null,reconnectCount=0;
+let currentPage=0,totalPage=6;
 let timer=null,forcedTimer=null;
 let isForcedShow=false,isScrolling=false,isInited=false;
 let lastAlert="",lastMeasure="",lastIntensity="",lastTsunami="",lastWeather="";
 let curScrollingLines=[];
 let measureDataCache={};
 let alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
-let wsIntensity=null,pingTimerIntensity=null,reconnectCountIntensity=0;
-let intHttpTimer=null,intHttpRetryCount=0;
-let isIntInited=false;
+let intensityWebSocket=null,intensityPingTimer=null,intensityReconnectCount=0;
+let intensityHttpTimer=null,intensityHttpRetryCount=0;
+let isIntensityInited=false;
 let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
 let domCache={}; // DOM节点缓存
@@ -32,104 +32,121 @@ const dom={
     weatherTag:document.getElementById("weatherTag")
 };
 
-(function init(){
-    curPage=0;
-    dom.wrap.style.transform=`translate3d(0, 0, 0)`;
-    dom.wrap.style.webkitTransform=`translate3d(0, 0, 0)`;
+/**
+ * 应用初始化函数
+ * 负责初始化应用状态、DOM结构、网络连接等
+ */
+(function init() {
+    // 初始化页面状态
+    currentPage = 0;
+    dom.wrap.style.transform = `translate3d(0, 0, 0)`;
+    dom.wrap.style.webkitTransform = `translate3d(0, 0, 0)`;
+    
     // 更新应用信息
-    if(dom.contentWraps[5]){
-        dom.contentWraps[5].innerHTML=`
+    if (dom.contentWraps[5]) {
+        dom.contentWraps[5].innerHTML = `
             <div class="line-item"><div class="line-text">${CONFIG.APP_INFO}</div></div>
         `;
     }
+    
     // 检查初始网络状态
-    if(checkNetworkStatus()){
+    if (checkNetworkStatus()) {
         console.log("✅ 网络连接正常，正在初始化WebSocket...");
-        initWebSocket();
-        initIntensityHttp();
-        initIntensityWss();
-    }else{
+        initWebSocket();      // 初始化主WebSocket连接
+        initIntensityHttp();  // 初始化烈度速报HTTP请求
+        initIntensityWss();   // 初始化烈度速报WebSocket连接
+    } else {
         console.log("❌ 网络连接异常，将在网络恢复后自动初始化");
     }
-    startMemoryCleanup(); // 启动内存清理定时器
-    startNetworkMonitor(); // 启动网络状态监听器
-    startPageLogic();
+    
+    startMemoryCleanup();   // 启动内存清理定时器
+    startNetworkMonitor();  // 启动网络状态监听器
+    startPageLogic();       // 启动页面逻辑
+    
     console.log("✅ 预警OBS版初始化完成（包含最终烈度速报解析逻辑）");
     console.log("✅ 内存清理机制已启动");
     console.log("✅ 网络状态监听器已启动");
 })();
 
 // 获取并缓存DOM节点
-function getCachedDOM(page, selector){
-    const cacheKey=`${page}_${selector}`;
-    if(!domCache[cacheKey]){
-        const wrap=dom.contentWraps[page];
-        if(wrap){
-            domCache[cacheKey]=wrap.querySelectorAll(selector);
+function getCachedDOM(page, selector) {
+    const cacheKey = `${page}_${selector}`;
+    if (!domCache[cacheKey]) {
+        const wrap = dom.contentWraps[page];
+        if (wrap) {
+            domCache[cacheKey] = wrap.querySelectorAll(selector);
         }
     }
-    return domCache[cacheKey]||[];
+    return domCache[cacheKey] || [];
 }
 
 // 清除特定页面的DOM缓存
-function clearDOMCache(page){
-    Object.keys(domCache).forEach(key=>{
-        if(key.startsWith(`${page}_`)){
+function clearDOMCache(page) {
+    Object.keys(domCache).forEach(key => {
+        if (key.startsWith(`${page}_`)) {
             delete domCache[key];
         }
     });
 }
 
-function startPageLogic(){
-    if(isForcedShow)return;
+/**
+ * 启动页面逻辑
+ * 负责处理页面滚动、动画等逻辑
+ */
+function startPageLogic() {
+    if (isForcedShow) return;
     clearTimer();
     
-    const wrap=dom.contentWraps[curPage];
-    if(!wrap)return;
+    const wrap = dom.contentWraps[currentPage];
+    if (!wrap) return;
     
     // 清除当前页面的DOM缓存，确保获取最新的DOM结构
-    clearDOMCache(curPage);
+    clearDOMCache(currentPage);
     
     // 使用缓存获取DOM节点
-    const lineItems=getCachedDOM(curPage,".line-item");
-    let hasScrolling=false;
+    const lineItems = getCachedDOM(currentPage, ".line-item");
+    let hasScrolling = false;
     
     // 重置滚动状态
     isScrolling = false;
     curScrollingLines = [];
     
-    lineItems.forEach(lineItem=>{
+    lineItems.forEach(lineItem => {
         lineItem.classList.remove("overflow");
-        const lineText=lineItem.querySelector(".line-text");
-        if(!lineText)return;
+        const lineText = lineItem.querySelector(".line-text");
+        if (!lineText) return;
 
         lineText.offsetWidth;
-        const isOverflow=lineText.scrollWidth>lineItem.clientWidth;
+        const isOverflow = lineText.scrollWidth > lineItem.clientWidth;
         
-        if(isOverflow){
+        if (isOverflow) {
             lineItem.classList.add("overflow");
-            hasScrolling=true;
+            hasScrolling = true;
             curScrollingLines.push(lineItem);
-            startLineScroll(lineText,lineItem);
+            startLineScroll(lineText, lineItem);
         }
     });
     
-    if(!hasScrolling){
-        timer=setTimeout(doPageTurn,CONFIG.NO_OVERFLOW_DELAY);
+    if (!hasScrolling) {
+        timer = setTimeout(doPageTurn, CONFIG.NO_OVERFLOW_DELAY);
     }
 }
 
-function doPageTurn(){
-    if(isForcedShow)return;
+/**
+ * 页面切换函数
+ * 负责处理页面之间的切换逻辑
+ */
+function doPageTurn() {
+    if (isForcedShow) return;
     
-    const nextPage=(curPage+1)%totalPage;
-    dom.wrap.style.transform=`translate3d(0, ${-100*nextPage}%, 0)`;
-    dom.wrap.style.webkitTransform=`translate3d(0, ${-100*nextPage}%, 0)`;
+    const nextPage = (currentPage + 1) % totalPage;
+    dom.wrap.style.transform = `translate3d(0, ${-100*nextPage}%, 0)`;
+    dom.wrap.style.webkitTransform = `translate3d(0, ${-100*nextPage}%, 0)`;
     
-    const onTransEnd=()=>{
+    const onTransEnd = () => {
         dom.wrap.removeEventListener("transitionend", onTransEnd);
         dom.wrap.removeEventListener("webkitTransitionEnd", onTransEnd);
-        curPage=nextPage;
+        currentPage = nextPage;
         startPageLogic();
     };
 
@@ -138,80 +155,86 @@ function doPageTurn(){
     dom.wrap.addEventListener("transitionend", onTransEnd);
     dom.wrap.addEventListener("webkitTransitionEnd", onTransEnd);
     
-    setTimeout(()=>{
+    setTimeout(() => {
         dom.wrap.removeEventListener("transitionend", onTransEnd);
         dom.wrap.removeEventListener("webkitTransitionEnd", onTransEnd);
-        curPage=nextPage;
+        currentPage = nextPage;
         startPageLogic();
-    },CONFIG.TRANSITION + 100);
+    }, CONFIG.TRANSITION + 100);
 }
 
-function startLineScroll(lineText,lineItem){
-    if(!lineText||!lineItem)return;
+/**
+ * 启动文本滚动动画
+ * 负责处理文本内容过长时的滚动显示
+ * @param {HTMLElement} lineText - 要滚动的文本元素
+ * @param {HTMLElement} lineItem - 文本元素的容器
+ */
+function startLineScroll(lineText, lineItem) {
+    if (!lineText || !lineItem) return;
     
     // 清除之前的动画和事件监听器
-    lineText.style.animation="";
-    lineText.style.webkitAnimation="";
-    lineText.removeEventListener('animationend', ()=>{});
-    lineText.removeEventListener('webkitAnimationEnd', ()=>{});
+    lineText.style.animation = "";
+    lineText.style.webkitAnimation = "";
+    lineText.removeEventListener('animationend', () => {});
+    lineText.removeEventListener('webkitAnimationEnd', () => {});
     
     // 清除之前的动画ID
-    const lineItemId=lineItem.getAttribute('data-animation-id')||`anim_${Date.now()}_${Math.random().toString(36).substr(2,9)}`;
-    lineItem.setAttribute('data-animation-id',lineItemId);
+    const lineItemId = lineItem.getAttribute('data-animation-id') || `anim_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    lineItem.setAttribute('data-animation-id', lineItemId);
     
-    if(animationIds[lineItemId]){
+    if (animationIds[lineItemId]) {
         cancelAnimationFrame(animationIds[lineItemId]);
         delete animationIds[lineItemId];
     }
     
     // 计算容器宽度和元素宽度
-    const containerWidth=lineItem.clientWidth;
-    const contentWidth=lineText.scrollWidth;
+    const containerWidth = lineItem.clientWidth;
+    const contentWidth = lineText.scrollWidth;
     
     // 设置初始位置：容器右侧外
-    let currentPosition=containerWidth;
+    let currentPosition = containerWidth;
     // 使用transform进行定位，避免重排
-    lineText.style.transform=`translate3d(${currentPosition}px, 0, 0)`;
-    lineText.style.webkitTransform=`translate3d(${currentPosition}px, 0, 0)`;
-    lineText.style.transition="";
-    lineText.style.webkitTransition="";
+    lineText.style.transform = `translate3d(${currentPosition}px, 0, 0)`;
+    lineText.style.webkitTransform = `translate3d(${currentPosition}px, 0, 0)`;
+    lineText.style.transition = "";
+    lineText.style.webkitTransition = "";
     // 添加will-change提示浏览器，优化动画性能
-    lineText.style.willChange="transform";
+    lineText.style.willChange = "transform";
     
     // 强制重排，确保初始位置生效
     lineText.offsetWidth;
     
     // 计算滚动距离和持续时间（转换为毫秒）
-    const totalScrollDistance=contentWidth+containerWidth;
-    const scrollDuration=Math.round((totalScrollDistance/CONFIG.SCROLL_SPEED)*1000);
-    const startTime=performance.now();
+    const totalScrollDistance = contentWidth + containerWidth;
+    const scrollDuration = Math.round((totalScrollDistance / CONFIG.SCROLL_SPEED) * 1000);
+    const startTime = performance.now();
     
     // 使用requestAnimationFrame实现平滑滚动
-    function animate(currentTime){
-        const elapsedTime=currentTime-startTime;
-        const progress=Math.min(elapsedTime/scrollDuration,1);
-        const newPosition=containerWidth-totalScrollDistance*progress;
+    function animate(currentTime) {
+        const elapsedTime = currentTime - startTime;
+        const progress = Math.min(elapsedTime / scrollDuration, 1);
+        const newPosition = containerWidth - totalScrollDistance * progress;
         
         // 使用transform进行动画，避免重排
-        lineText.style.transform=`translate3d(${newPosition}px, 0, 0)`;
-        lineText.style.webkitTransform=`translate3d(${newPosition}px, 0, 0)`;
+        lineText.style.transform = `translate3d(${newPosition}px, 0, 0)`;
+        lineText.style.webkitTransform = `translate3d(${newPosition}px, 0, 0)`;
         
-        if(progress<1){
-            animationIds[lineItemId]=requestAnimationFrame(animate);
-        }else{
+        if (progress < 1) {
+            animationIds[lineItemId] = requestAnimationFrame(animate);
+        } else {
             // 滚动结束
-            lineText.style.transform="";
-            lineText.style.webkitTransform="";
+            lineText.style.transform = "";
+            lineText.style.webkitTransform = "";
             // 清除will-change属性
-            lineText.style.willChange="";
-            curScrollingLines=curScrollingLines.filter(item=>item!==lineItem);
+            lineText.style.willChange = "";
+            curScrollingLines = curScrollingLines.filter(item => item !== lineItem);
             isScrolling = false;
             
             // 清除动画ID
             delete animationIds[lineItemId];
             
             setTimeout(() => {
-                if(!isForcedShow && curScrollingLines.length === 0){
+                if (!isForcedShow && curScrollingLines.length === 0) {
                     doPageTurn();
                 }
             }, 100);
@@ -219,15 +242,37 @@ function startLineScroll(lineText,lineItem){
     }
     
     // 开始动画
-    animationIds[lineItemId]=requestAnimationFrame(animate);
+    animationIds[lineItemId] = requestAnimationFrame(animate);
 }
 
-function addTagBlink(page){
+/**
+ * 添加标签闪烁效果
+ * 为指定页面的标签添加闪烁动画
+ * @param {number} page - 页面索引
+ */
+function addTagBlink(page) {
     removeAllTagBlink();
-    switch(page){case 0:dom.alertTag.classList.add("tag-blink");break;case 1:dom.measureTag.classList.add("tag-blink");break;case 2:dom.intensityTag.classList.add("tag-blink");break;case 3:dom.tsunamiTag.classList.add("tag-blink");break;}
+    switch (page) {
+        case 0:
+            dom.alertTag.classList.add("tag-blink");
+            break;
+        case 1:
+            dom.measureTag.classList.add("tag-blink");
+            break;
+        case 2:
+            dom.intensityTag.classList.add("tag-blink");
+            break;
+        case 3:
+            dom.tsunamiTag.classList.add("tag-blink");
+            break;
+    }
 }
 
-function removeAllTagBlink(){
+/**
+ * 移除所有标签的闪烁效果
+ * 清除所有标签的闪烁动画
+ */
+function removeAllTagBlink() {
     dom.alertTag.classList.remove("tag-blink");
     dom.measureTag.classList.remove("tag-blink");
     dom.intensityTag.classList.remove("tag-blink");
@@ -235,44 +280,53 @@ function removeAllTagBlink(){
     dom.weatherTag.classList.remove("tag-blink");
 }
 
-function renderContent(page,isDoubleLine,line1,line2="",color=""){
-    const wrap=dom.contentWraps[page];
-    if(!wrap)return;
+/**
+ * 渲染内容函数
+ * 负责在指定页面渲染内容
+ * @param {number} page - 页面索引
+ * @param {boolean} isDoubleLine - 是否为双行显示
+ * @param {string} line1 - 第一行内容
+ * @param {string} line2 - 第二行内容（可选）
+ * @param {string} color - 文本颜色（可选）
+ */
+function renderContent(page, isDoubleLine, line1, line2 = "", color = "") {
+    const wrap = dom.contentWraps[page];
+    if (!wrap) return;
     
     // 使用DocumentFragment批量更新DOM
-    const fragment=document.createDocumentFragment();
-    const highlightStyle=`style="color:${CONFIG.HIGHLIGHT_COLOR}"`;
-    line1=line1.replace(/<span class="highlight-num">/g,`<span class="highlight-num" ${highlightStyle}>`);
-    line2=line2.replace(/<span class="highlight-num">/g,`<span class="highlight-num" ${highlightStyle}>`);
+    const fragment = document.createDocumentFragment();
+    const highlightStyle = `style="color:${CONFIG.HIGHLIGHT_COLOR}"`;
+    line1 = line1.replace(/<span class="highlight-num">/g, `<span class="highlight-num" ${highlightStyle}>`);
+    line2 = line2.replace(/<span class="highlight-num">/g, `<span class="highlight-num" ${highlightStyle}>`);
     
     // 创建第一个行项目
-    const lineItem1=document.createElement("div");
-    lineItem1.className="line-item";
-    const lineText1=document.createElement("div");
-    lineText1.className="line-text";
-    if(color){
-        lineText1.style.color=color;
+    const lineItem1 = document.createElement("div");
+    lineItem1.className = "line-item";
+    const lineText1 = document.createElement("div");
+    lineText1.className = "line-text";
+    if (color) {
+        lineText1.style.color = color;
     }
-    lineText1.innerHTML=line1;
+    lineText1.innerHTML = line1;
     lineItem1.appendChild(lineText1);
     fragment.appendChild(lineItem1);
     
     // 如果是双行，创建第二个行项目
-    if(isDoubleLine){
-        const lineItem2=document.createElement("div");
-        lineItem2.className="line-item";
-        const lineText2=document.createElement("div");
-        lineText2.className="line-text";
-        if(color){
-            lineText2.style.color=color;
+    if (isDoubleLine) {
+        const lineItem2 = document.createElement("div");
+        lineItem2.className = "line-item";
+        const lineText2 = document.createElement("div");
+        lineText2.className = "line-text";
+        if (color) {
+            lineText2.style.color = color;
         }
-        lineText2.innerHTML=line2;
+        lineText2.innerHTML = line2;
         lineItem2.appendChild(lineText2);
         fragment.appendChild(lineItem2);
     }
     
     // 清空并添加新内容
-    wrap.innerHTML="";
+    wrap.innerHTML = "";
     wrap.appendChild(fragment);
 
     // 清除对应页面的DOM缓存，确保下次获取的是最新的DOM结构
@@ -281,48 +335,72 @@ function renderContent(page,isDoubleLine,line1,line2="",color=""){
     // 强制重排，确保样式生效
     wrap.offsetWidth;
 
-    if(curPage===page&&!isForcedShow){
+    if (currentPage === page && !isForcedShow) {
         startPageLogic();
     }
 }
 
-function renderHistoryData(page,isDoubleLine,line1,line2="",color=""){
-    renderContent(page,isDoubleLine,line1,line2,color);
+/**
+ * 渲染历史数据
+ * 用于渲染非实时的历史预警数据
+ * @param {number} page - 页面索引
+ * @param {boolean} isDoubleLine - 是否为双行显示
+ * @param {string} line1 - 第一行内容
+ * @param {string} line2 - 第二行内容（可选）
+ * @param {string} color - 文本颜色（可选）
+ */
+function renderHistoryData(page, isDoubleLine, line1, line2 = "", color = "") {
+    renderContent(page, isDoubleLine, line1, line2, color);
 }
 
-function renderRealTimeData(page,isDoubleLine,line1,line2="",color=""){
+/**
+ * 渲染实时数据
+ * 用于渲染实时预警数据，会强制显示并添加闪烁效果
+ * @param {number} page - 页面索引
+ * @param {boolean} isDoubleLine - 是否为双行显示
+ * @param {string} line1 - 第一行内容
+ * @param {string} line2 - 第二行内容（可选）
+ * @param {string} color - 文本颜色（可选）
+ */
+function renderRealTimeData(page, isDoubleLine, line1, line2 = "", color = "") {
     clearAllTimer();
-    isForcedShow=true;
-    isScrolling=false;
+    isForcedShow = true;
+    isScrolling = false;
     
     document.querySelectorAll('.line-text').forEach(text => {
         text.style.animation = "";
         text.style.webkitAnimation = "";
     });
-    dom.wrap.removeEventListener('transitionend', ()=>{});
-    dom.wrap.removeEventListener('webkitTransitionEnd', ()=>{});
+    dom.wrap.removeEventListener('transitionend', () => {});
+    dom.wrap.removeEventListener('webkitTransitionEnd', () => {});
 
-    const targetColor=color||PAGE_COLOR_MAP[page]||"#fff";
-    dom.wrap.style.transition="none";
-    dom.wrap.style.webkitTransition="none";
-    dom.wrap.style.transform=`translate3d(0, ${-100*page}%, 0)`;
-    dom.wrap.style.webkitTransform=`translate3d(0, ${-100*page}%, 0)`;
-    setTimeout(()=>{
-        dom.wrap.style.transition=`transform ${CONFIG.TRANSITION/1000}s ease-in-out`;
-        dom.wrap.style.webkitTransition=`-webkit-transform ${CONFIG.TRANSITION/1000}s ease-in-out`;
-    },CONFIG.TRANSITION+50);
-    renderContent(page,isDoubleLine,line1,line2,targetColor);
-    curPage=page;
+    const targetColor = color || PAGE_COLOR_MAP[page] || "#fff";
+    dom.wrap.style.transition = "none";
+    dom.wrap.style.webkitTransition = "none";
+    dom.wrap.style.transform = `translate3d(0, ${-100*page}%, 0)`;
+    dom.wrap.style.webkitTransform = `translate3d(0, ${-100*page}%, 0)`;
+    setTimeout(() => {
+        dom.wrap.style.transition = `transform ${CONFIG.TRANSITION/1000}s ease-in-out`;
+        dom.wrap.style.webkitTransition = `-webkit-transform ${CONFIG.TRANSITION/1000}s ease-in-out`;
+    }, CONFIG.TRANSITION + 50);
+    renderContent(page, isDoubleLine, line1, line2, targetColor);
+    currentPage = page;
     addTagBlink(page);
     startPageLogic();
     
-    forcedTimer=setTimeout(()=>{
-        isForcedShow=false;
+    forcedTimer = setTimeout(() => {
+        isForcedShow = false;
         removeAllTagBlink();
         startPageLogic();
-    },CONFIG.FORCED_SHOW);
+    }, CONFIG.FORCED_SHOW);
 }
 
+/**
+ * 解析地震预警数据
+ * 负责处理来自不同来源的地震预警数据
+ * @param {Object} data - 预警数据对象
+ * @param {string} source - 数据来源
+ */
 function parseAlertData(data, source) {
     if (!data?.id || !data?.placeName || !data.magnitude) return;
 
@@ -357,7 +435,12 @@ function parseAlertData(data, source) {
     isInited ? renderRealTimeData(0, true, line1, line2) : renderHistoryData(0, true, line1, line2);
 }
 
-function handleMeasureCache(){
+/**
+ * 处理台网测定数据缓存
+ * 负责整理和筛选台网测定数据，优先保留正式测定结果
+ * @returns {Object|null} - 处理后的最新台网测定数据
+ */
+function handleMeasureCache() {
     const eventMap = {};
     Object.values(measureDataCache).forEach(item => {
         const { data, source } = item;
@@ -385,113 +468,160 @@ function handleMeasureCache(){
     return sortedList.length > 0 ? sortedList[0] : null;
 }
 
-function parseMeasureData(data){
-    const sourceMap={ningxia:"宁夏地震局地震信息",guangxi:"广西地震局地震信息",shanxi:"山西地震局地震信息",beijing:"北京地震局地震信息",cenc:"中国地震台网中心"};
-    const currentSource=parseMeasureData.source||"cenc";
-    const isCencSource=currentSource==="cenc";
-    if((isCencSource&&(!data?.id||!data?.placeName||!data.magnitude))||(!isCencSource&&(!data?.shockTime||!data?.placeName||!data?.magnitude))){renderHistoryData(1,false,"暂无台网测定数据");return}
-    const uniqueId=isCencSource?`${data.id}_${data.magnitude}_${data.placeName}`:`${data.eventId||""}_${data.id||""}_${data.shockTime}_${data.placeName}_${data.magnitude}_${data.depth||0}`;
-    if(uniqueId===lastMeasure){
-        const latestData=handleMeasureCache();
-        if(latestData)renderMeasureLatest(latestData);
+/**
+ * 解析台网测定数据
+ * 负责处理来自不同地震台网的测定数据
+ * @param {Object} data - 台网测定数据对象
+ */
+function parseMeasureData(data) {
+    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", cenc: "中国地震台网中心"};
+    const currentSource = parseMeasureData.source || "cenc";
+    const isCencSource = currentSource === "cenc";
+    if ((isCencSource && (!data?.id || !data?.placeName || !data.magnitude)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude))) {
+        renderHistoryData(1, false, "暂无台网测定数据");
         return;
     }
-    lastMeasure=uniqueId;
-    measureDataCache[uniqueId]={data,source:currentSource,uniqueId};
-    const latestData=handleMeasureCache();
-    latestData?renderMeasureLatest(latestData):renderHistoryData(1,false,"暂无台网测定数据");
+    const uniqueId = isCencSource ? `${data.id}_${data.magnitude}_${data.placeName}` : `${data.eventId || ""}_${data.id || ""}_${data.shockTime}_${data.placeName}_${data.magnitude}_${data.depth || 0}`;
+    if (uniqueId === lastMeasure) {
+        const latestData = handleMeasureCache();
+        if (latestData) renderMeasureLatest(latestData);
+        return;
+    }
+    lastMeasure = uniqueId;
+    measureDataCache[uniqueId] = {data, source: currentSource, uniqueId};
+    const latestData = handleMeasureCache();
+    latestData ? renderMeasureLatest(latestData) : renderHistoryData(1, false, "暂无台网测定数据");
 }
 
-function renderMeasureLatest(latestItem){
-    const {data,source}=latestItem;
-    const sourceMap={ningxia:"宁夏地震局地震信息",guangxi:"广西地震局地震信息",shanxi:"山西地震局地震信息",beijing:"北京地震局地震信息",cenc:"中国地震台网中心"};
+/**
+ * 渲染台网测定最新数据
+ * 负责渲染处理后的最新台网测定数据
+ * @param {Object} latestItem - 最新台网测定数据项
+ */
+function renderMeasureLatest(latestItem) {
+    const {data, source} = latestItem;
+    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", cenc: "中国地震台网中心"};
     const isFormal = source === "cenc" ? (data.infoTypeName?.includes("正式") || false) : false;
     const isAuto = source === "cenc" ? (data.infoTypeName?.includes("自动") || false) : false;
     const dataType = isFormal ? "正式测定" : (isAuto ? "自动测定" : "测定");
     
-    const line1=source!=="cenc"?`${sourceMap[source]}(${dataType})`:`中国地震台网中心${dataType}`;
-    const line2=`${data.shockTime||"未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth||"未知"}</span>公里。`;
-    isInited?renderRealTimeData(1,true,line1,line2):renderHistoryData(1,true,line1,line2);
+    const line1 = source !== "cenc" ? `${sourceMap[source]}(${dataType})` : `中国地震台网中心${dataType}`;
+    const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里。`;
+    isInited ? renderRealTimeData(1, true, line1, line2) : renderHistoryData(1, true, line1, line2);
 }
 
-async function intHttpGet(url){
-    const controller=new AbortController();
-    const timeoutTimer=setTimeout(()=>controller.abort(),CONFIG.HTTP_TIMEOUT);
-    try{
-        const res=await fetch(url,{method:"GET",headers:{"Content-Type":"application/json;charset=utf-8"},signal:controller.signal});
+/**
+ * 发送HTTP请求的工具函数
+ * @param {string} url - 请求URL
+ * @returns {Promise<Object>} - 响应数据
+ */
+async function intHttpGet(url) {
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), CONFIG.HTTP_TIMEOUT);
+    try {
+        const res = await fetch(url, { method: "GET", headers: { "Content-Type": "application/json;charset=utf-8" }, signal: controller.signal });
         clearTimeout(timeoutTimer);
-        if(!res.ok)throw new Error(`HTTP${res.status}`);
+        if (!res.ok) throw new Error(`HTTP${res.status}`);
         return await res.json();
-    }catch(err){clearTimeout(timeoutTimer);throw err}
+    } catch (err) {
+        clearTimeout(timeoutTimer);
+        throw err;
+    }
 }
 
-function intHttpRetry(){
-    if(intHttpTimer)clearTimeout(intHttpTimer);
-    intHttpRetryCount++;
-    if(intHttpRetryCount>=CONFIG.MAX_RETRY){renderHistoryData(2,false,"暂无烈度速报数据");return}
-    intHttpTimer=setTimeout(initIntensityHttp,CONFIG.RETRY_DELAY);
+/**
+ * HTTP请求重试函数
+ */
+function intHttpRetry() {
+    if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
+    intensityHttpRetryCount++;
+    if (intensityHttpRetryCount >= CONFIG.MAX_RETRY) {
+        renderHistoryData(2, false, "暂无烈度速报数据");
+        return;
+    }
+    intensityHttpTimer = setTimeout(initIntensityHttp, CONFIG.RETRY_DELAY);
 }
 
-async function getIntEvent(eqId){
-    try{
-        const data=await intHttpGet(`${CONFIG.INT_HTTP_EVENT}${eqId}`);
-        parseIntensityData(data,false);
-        intHttpRetryCount=0;
-    }catch(err){intHttpRetry()}
+/**
+ * 获取烈度速报事件数据
+ * @param {string} eqId - 地震事件ID
+ */
+async function getIntEvent(eqId) {
+    try {
+        const data = await intHttpGet(`${CONFIG.INT_HTTP_EVENT}${eqId}`);
+        parseIntensityData(data, false);
+        intensityHttpRetryCount = 0;
+    } catch (err) {
+        intHttpRetry();
+    }
 }
 
-async function initIntensityHttp(){
-    if(intHttpTimer)clearTimeout(intHttpTimer);
-    if(intHttpRetryCount>=CONFIG.MAX_RETRY)return;
-    try{
-        const lastIdData=await intHttpGet(CONFIG.INT_HTTP_LASTID);
-        const eqId=lastIdData.eq_id;
-        if(typeof eqId!=="string"||!eqId.trim())throw new Error("eq_id无效");
+/**
+ * 初始化烈度速报HTTP请求
+ */
+async function initIntensityHttp() {
+    if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
+    if (intensityHttpRetryCount >= CONFIG.MAX_RETRY) return;
+    try {
+        const lastIdData = await intHttpGet(CONFIG.INT_HTTP_LASTID);
+        const eqId = lastIdData.eq_id;
+        if (typeof eqId !== "string" || !eqId.trim()) throw new Error("eq_id无效");
         getIntEvent(eqId);
-    }catch(err){intHttpRetry()}
+    } catch (err) {
+        intHttpRetry();
+    }
 }
 
-function closeIntWss(){
-    if(wsIntensity){
-        try{
-            wsIntensity.close(1000,"烈度速报WSS主动关闭");
+/**
+ * 关闭烈度速报WebSocket连接
+ */
+function closeIntWss() {
+    if (intensityWebSocket) {
+        try {
+            intensityWebSocket.close(1000, "烈度速报WSS主动关闭");
             console.log("✅ 烈度速报WebSocket已关闭");
-        }catch(err){
-            console.error("关闭烈度速报WebSocket失败：",err);
-        }finally{
-            wsIntensity=null;
+        } catch (err) {
+            console.error("关闭烈度速报WebSocket失败：", err);
+        } finally {
+            intensityWebSocket = null;
         }
     }
-    if(pingTimerIntensity){
-        clearInterval(pingTimerIntensity);
-        pingTimerIntensity=null;
+    if (intensityPingTimer) {
+        clearInterval(intensityPingTimer);
+        intensityPingTimer = null;
     }
 }
 
-function intWssRetry(){
-    if(pingTimerIntensity)clearInterval(pingTimerIntensity);
-    if(intHttpTimer)clearTimeout(intHttpTimer);
-    reconnectCountIntensity++;
-    const delay=Math.min(3000*Math.pow(2,reconnectCountIntensity),30000);
-    setTimeout(initIntensityWss,delay);
+/**
+ * 烈度速报WebSocket重连函数
+ */
+function intWssRetry() {
+    if (intensityPingTimer) clearInterval(intensityPingTimer);
+    if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
+    intensityReconnectCount++;
+    const delay = Math.min(3000 * Math.pow(2, intensityReconnectCount), 30000);
+    setTimeout(initIntensityWss, delay);
 }
 
-function initIntensityWss(){
+/**
+ * 初始化烈度速报WebSocket连接
+ */
+function initIntensityWss() {
     closeIntWss();
     
-    wsIntensity = createWebSocket(CONFIG.INT_WSS_REAL, {
+    intensityWebSocket = createWebSocket(CONFIG.INT_WSS_REAL, {
         onOpen: (socket) => {
             console.log("✅ 烈度速报WebSocket连接成功");
-            reconnectCountIntensity = 0;
-            isIntInited = true;
+            intensityReconnectCount = 0;
+            isIntensityInited = true;
             
-            pingTimerIntensity = setInterval(() => {
+            intensityPingTimer = setInterval(() => {
                 if (socket && socket.readyState === 1) {
                     try {
                         socket.send("ping");
                     } catch (err) {
                         console.error("发送烈度速报ping失败：", err);
-                        clearInterval(pingTimerIntensity);
+                        clearInterval(intensityPingTimer);
                         if (socket && socket.readyState !== 3) socket.close();
                     }
                 }
@@ -508,8 +638,8 @@ function initIntensityWss(){
         },
         onClose: (event) => {
             console.log(`烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
-            clearInterval(pingTimerIntensity);
-            wsIntensity = null;
+            clearInterval(intensityPingTimer);
+            intensityWebSocket = null;
             if (event.code !== 1000) {
                 intWssRetry();
             }
@@ -518,7 +648,7 @@ function initIntensityWss(){
             intWssRetry();
         },
         reconnectCallback: initIntensityWss,
-        reconnectCount: reconnectCountIntensity++
+        reconnectCount: intensityReconnectCount++
     });
 }
 
@@ -631,37 +761,48 @@ function parseIntensityData(data, isRealTime) {
 }
 // ==================================================================================
 
-function parseTsunamiData(data){
-    if(!data?.id||!data?.warningInfo){renderHistoryData(3,false,"暂无海啸预警数据");return}
-    const uniqueId=`${data.id}_${data.warningInfo?.title}`;
-    if(uniqueId===lastTsunami)return;
-    lastTsunami=uniqueId;
-    const warn=data.warningInfo;
-    const batch=data.details?.batch||1;
-    const forecast=Array.isArray(data.forecasts)?data.forecasts.map(item=>`${item.province||"未知区域"}${item.forecastArea||""}${item.estimatedArrivalTime||"未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight||0}</span>厘米`).join("；"):"";
-    const line1=`自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title||"海啸警报"}${warn.subtitle||""}${forecast?"，"+forecast:""}`;
-    isInited?renderRealTimeData(3,false,line1):renderHistoryData(3,false,line1);
-}
-
-function parseWeatherData(data){
-    const colorMap={红色:"#FF0000",橙色:"#FF7F50",黄色:"#FFFF00",蓝色:"#1E90FF",默认:"#9933ff"};
-    if(!data?.id||!data?.headline||!data?.description){
-        dom.weatherTag.style.backgroundColor=colorMap["默认"];
-        renderHistoryData(4,false,"暂无气象预警数据","",colorMap["默认"]);
-        lastWeather="";
+/**
+ * 解析海啸预警数据
+ * @param {Object} data - 海啸预警数据对象
+ */
+function parseTsunamiData(data) {
+    if (!data?.id || !data?.warningInfo) {
+        renderHistoryData(3, false, "暂无海啸预警数据");
         return;
     }
-    const uniqueId=`${data.id}_${data.headline}_${data.description}_${data.effective||""}`;
-    if(uniqueId===lastWeather)return;
-    lastWeather=uniqueId;
-    const level=data.headline.includes("红色")?"红色":data.headline.includes("橙色")?"橙色":data.headline.includes("黄色")?"黄色":data.headline.includes("蓝色")?"蓝色":"默认";
-    const targetColor=colorMap[level];
-    dom.weatherTag.style.backgroundColor=targetColor;
-    const line1=`${data.effective||"未知时间"} ${data.headline}`;
-    const line2=data.description||"请做好相关防范措施";
+    const uniqueId = `${data.id}_${data.warningInfo?.title}`;
+    if (uniqueId === lastTsunami) return;
+    lastTsunami = uniqueId;
+    const warn = data.warningInfo;
+    const batch = data.details?.batch || 1;
+    const forecast = Array.isArray(data.forecasts) ? data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""}${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
+    const line1 = `自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title || "海啸警报"}${warn.subtitle || ""}${forecast ? "，" + forecast : ""}`;
+    isInited ? renderRealTimeData(3, false, line1) : renderHistoryData(3, false, line1);
+}
+
+/**
+ * 解析气象预警数据
+ * @param {Object} data - 气象预警数据对象
+ */
+function parseWeatherData(data) {
+    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: "#9933ff"};
+    if (!data?.id || !data?.headline || !data?.description) {
+        dom.weatherTag.style.backgroundColor = colorMap["默认"];
+        renderHistoryData(4, false, "暂无气象预警数据", "", colorMap["默认"]);
+        lastWeather = "";
+        return;
+    }
+    const uniqueId = `${data.id}_${data.headline}_${data.description}_${data.effective || ""}`;
+    if (uniqueId === lastWeather) return;
+    lastWeather = uniqueId;
+    const level = data.headline.includes("红色") ? "红色" : data.headline.includes("橙色") ? "橙色" : data.headline.includes("黄色") ? "黄色" : data.headline.includes("蓝色") ? "蓝色" : "默认";
+    const targetColor = colorMap[level];
+    dom.weatherTag.style.backgroundColor = targetColor;
+    const line1 = `${data.effective || "未知时间"} ${data.headline}`;
+    const line2 = data.description || "请做好相关防范措施";
     
-    CONFIG.WEATHER_FORCED&&isInited?renderRealTimeData(4,true,line1,line2,targetColor):renderHistoryData(4,true,line1,line2,targetColor);
-    if(curPage === 4) startPageLogic();
+    CONFIG.WEATHER_FORCED && isInited ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
+    if (currentPage === 4) startPageLogic();
 }
 
 // 创建WebSocket连接的通用函数
@@ -828,16 +969,16 @@ function createWebSocket(url, options) {
 
 function initWebSocket(){
     clearInterval(pingTimer);
-    if(ws&&ws.readyState!==3){
+    if(webSocket&&webSocket.readyState!==3){
         try{
-            ws.close(1000,"重连清理");
+            webSocket.close(1000,"重连清理");
         }catch(err){
             console.error("WebSocket关闭失败：",err);
         }
-        ws=null;
+        webSocket=null;
     }
     
-    ws = createWebSocket(CONFIG.WS_ALL, {
+    webSocket = createWebSocket(CONFIG.WS_ALL, {
         onOpen: (socket) => {
             reconnectCount = 0;
             isInited = false;
@@ -904,7 +1045,7 @@ function initWebSocket(){
         },
         onClose: () => {
             clearInterval(pingTimer);
-            ws = null;
+            webSocket = null;
         },
         reconnectCallback: initWebSocket,
         reconnectCount: reconnectCount++
@@ -920,49 +1061,61 @@ function clearAllTimer(){
     if(intHttpTimer){clearTimeout(intHttpTimer);intHttpTimer=null}
 }
 
-// 内存清理函数
-function clearMemory(){
+/**
+ * 内存清理函数
+ * 负责清理缓存数据和动画ID，防止内存泄漏
+ */
+function clearMemory() {
     // 清理缓存数据
-    if(Object.keys(measureDataCache).length>100){
+    if (Object.keys(measureDataCache).length > 100) {
         // 保留最新的10条数据
-        const keys=Object.keys(measureDataCache).sort((a,b)=>{
-            const timeA=measureDataCache[a].data.shockTime?new Date(measureDataCache[a].data.shockTime).getTime():0;
-            const timeB=measureDataCache[b].data.shockTime?new Date(measureDataCache[b].data.shockTime).getTime():0;
-            return timeB-timeA;
+        const keys = Object.keys(measureDataCache).sort((a, b) => {
+            const timeA = measureDataCache[a].data.shockTime ? new Date(measureDataCache[a].data.shockTime).getTime() : 0;
+            const timeB = measureDataCache[b].data.shockTime ? new Date(measureDataCache[b].data.shockTime).getTime() : 0;
+            return timeB - timeA;
         });
-        keys.slice(10).forEach(key=>delete measureDataCache[key]);
+        keys.slice(10).forEach(key => delete measureDataCache[key]);
     }
     
     // 清理动画ID
-    Object.values(animationIds).forEach(id=>{
-        if(id)cancelAnimationFrame(id);
+    Object.values(animationIds).forEach(id => {
+        if (id) cancelAnimationFrame(id);
     });
-    animationIds={};
+    animationIds = {};
 }
 
-// 启动内存清理定时器
-function startMemoryCleanup(){
-    if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
+/**
+ * 启动内存清理定时器
+ * 每5分钟执行一次内存清理
+ */
+function startMemoryCleanup() {
+    if (memoryCleanupTimer) clearInterval(memoryCleanupTimer);
     // 每5分钟清理一次内存
-    memoryCleanupTimer=setInterval(clearMemory,5*60*1000);
+    memoryCleanupTimer = setInterval(clearMemory, 5 * 60 * 1000);
 }
 
-// 检查当前网络状态
+/**
+ * 检查当前网络状态
+ * @returns {boolean} - 当前网络状态，true表示在线，false表示离线
+ */
 function checkNetworkStatus() {
     return navigator.onLine;
 }
 
-// 启动网络状态监听
+/**
+ * 启动网络状态监听
+ * 监听网络连接和断开事件，并在网络状态变化时采取相应措施
+ */
 function startNetworkMonitor() {
     // 监听网络连接事件
     window.addEventListener('online', function() {
         console.log('✅ 网络已连接');
         // 网络恢复时，尝试重连WebSocket
-        if (!ws || ws.readyState === 3) {
+        if (!webSocket || webSocket.readyState === 3) {
             console.log('正在重连主WebSocket...');
             initWebSocket();
         }
-        if (!wsIntensity || wsIntensity.readyState === 3) {
+        if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
             console.log('正在重连烈度速报WebSocket...');
             initIntensityWss();
         }
@@ -981,13 +1134,13 @@ window.onbeforeunload=()=>{
     clearInterval(pingTimer);
     clearAllTimer();
     if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
-    if(ws&&ws.readyState!==3)ws.close(1000,"页面关闭");
+    if(webSocket&&webSocket.readyState!==3)webSocket.close(1000,"页面关闭");
     measureDataCache={};
     alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
-    clearInterval(pingTimerIntensity);
+    clearInterval(intensityPingTimer);
     closeIntWss();
-    intHttpRetryCount=0;
-    reconnectCountIntensity=0;
+    intensityHttpRetryCount=0;
+    intensityReconnectCount=0;
     
     // 清理所有动画
     Object.values(animationIds).forEach(id=>{
