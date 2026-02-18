@@ -13,6 +13,7 @@ let intHttpTimer=null,intHttpRetryCount=0;
 let isIntInited=false;
 let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
+let domCache={}; // DOM节点缓存
 
 const dom={
     wrap:document.getElementById("mainScrollWrapper"),
@@ -41,14 +42,43 @@ const dom={
             <div class="line-item"><div class="line-text">${CONFIG.APP_INFO}</div></div>
         `;
     }
-    initWebSocket();
-    initIntensityHttp();
-    initIntensityWss();
+    // 检查初始网络状态
+    if(checkNetworkStatus()){
+        console.log("✅ 网络连接正常，正在初始化WebSocket...");
+        initWebSocket();
+        initIntensityHttp();
+        initIntensityWss();
+    }else{
+        console.log("❌ 网络连接异常，将在网络恢复后自动初始化");
+    }
     startMemoryCleanup(); // 启动内存清理定时器
+    startNetworkMonitor(); // 启动网络状态监听器
     startPageLogic();
     console.log("✅ 预警OBS版初始化完成（包含最终烈度速报解析逻辑）");
     console.log("✅ 内存清理机制已启动");
+    console.log("✅ 网络状态监听器已启动");
 })();
+
+// 获取并缓存DOM节点
+function getCachedDOM(page, selector){
+    const cacheKey=`${page}_${selector}`;
+    if(!domCache[cacheKey]){
+        const wrap=dom.contentWraps[page];
+        if(wrap){
+            domCache[cacheKey]=wrap.querySelectorAll(selector);
+        }
+    }
+    return domCache[cacheKey]||[];
+}
+
+// 清除特定页面的DOM缓存
+function clearDOMCache(page){
+    Object.keys(domCache).forEach(key=>{
+        if(key.startsWith(`${page}_`)){
+            delete domCache[key];
+        }
+    });
+}
 
 function startPageLogic(){
     if(isForcedShow)return;
@@ -56,7 +86,12 @@ function startPageLogic(){
     
     const wrap=dom.contentWraps[curPage];
     if(!wrap)return;
-    const lineItems=wrap.querySelectorAll(".line-item");
+    
+    // 清除当前页面的DOM缓存，确保获取最新的DOM结构
+    clearDOMCache(curPage);
+    
+    // 使用缓存获取DOM节点
+    const lineItems=getCachedDOM(curPage,".line-item");
     let hasScrolling=false;
     
     // 重置滚动状态
@@ -135,10 +170,13 @@ function startLineScroll(lineText,lineItem){
     
     // 设置初始位置：容器右侧外
     let currentPosition=containerWidth;
+    // 使用transform进行定位，避免重排
     lineText.style.transform=`translate3d(${currentPosition}px, 0, 0)`;
     lineText.style.webkitTransform=`translate3d(${currentPosition}px, 0, 0)`;
     lineText.style.transition="";
     lineText.style.webkitTransition="";
+    // 添加will-change提示浏览器，优化动画性能
+    lineText.style.willChange="transform";
     
     // 强制重排，确保初始位置生效
     lineText.offsetWidth;
@@ -154,6 +192,7 @@ function startLineScroll(lineText,lineItem){
         const progress=Math.min(elapsedTime/scrollDuration,1);
         const newPosition=containerWidth-totalScrollDistance*progress;
         
+        // 使用transform进行动画，避免重排
         lineText.style.transform=`translate3d(${newPosition}px, 0, 0)`;
         lineText.style.webkitTransform=`translate3d(${newPosition}px, 0, 0)`;
         
@@ -163,6 +202,8 @@ function startLineScroll(lineText,lineItem){
             // 滚动结束
             lineText.style.transform="";
             lineText.style.webkitTransform="";
+            // 清除will-change属性
+            lineText.style.willChange="";
             curScrollingLines=curScrollingLines.filter(item=>item!==lineItem);
             isScrolling = false;
             
@@ -197,15 +238,47 @@ function removeAllTagBlink(){
 function renderContent(page,isDoubleLine,line1,line2="",color=""){
     const wrap=dom.contentWraps[page];
     if(!wrap)return;
-    wrap.innerHTML="";
+    
+    // 使用DocumentFragment批量更新DOM
+    const fragment=document.createDocumentFragment();
     const highlightStyle=`style="color:${CONFIG.HIGHLIGHT_COLOR}"`;
     line1=line1.replace(/<span class="highlight-num">/g,`<span class="highlight-num" ${highlightStyle}>`);
     line2=line2.replace(/<span class="highlight-num">/g,`<span class="highlight-num" ${highlightStyle}>`);
-    wrap.innerHTML=isDoubleLine?`
-        <div class="line-item"><div class="line-text" ${color?`style="color:${color}"`:""}>${line1}</div></div>
-        <div class="line-item"><div class="line-text" ${color?`style="color:${color}"`:""}>${line2}</div></div>
-    `:`<div class="line-item"><div class="line-text" ${color?`style="color:${color}"`:""}>${line1}</div></div>`;
+    
+    // 创建第一个行项目
+    const lineItem1=document.createElement("div");
+    lineItem1.className="line-item";
+    const lineText1=document.createElement("div");
+    lineText1.className="line-text";
+    if(color){
+        lineText1.style.color=color;
+    }
+    lineText1.innerHTML=line1;
+    lineItem1.appendChild(lineText1);
+    fragment.appendChild(lineItem1);
+    
+    // 如果是双行，创建第二个行项目
+    if(isDoubleLine){
+        const lineItem2=document.createElement("div");
+        lineItem2.className="line-item";
+        const lineText2=document.createElement("div");
+        lineText2.className="line-text";
+        if(color){
+            lineText2.style.color=color;
+        }
+        lineText2.innerHTML=line2;
+        lineItem2.appendChild(lineText2);
+        fragment.appendChild(lineItem2);
+    }
+    
+    // 清空并添加新内容
+    wrap.innerHTML="";
+    wrap.appendChild(fragment);
 
+    // 清除对应页面的DOM缓存，确保下次获取的是最新的DOM结构
+    clearDOMCache(page);
+
+    // 强制重排，确保样式生效
     wrap.offsetWidth;
 
     if(curPage===page&&!isForcedShow){
@@ -405,125 +478,154 @@ function intWssRetry(){
 
 function initIntensityWss(){
     closeIntWss();
-    try{
-        console.log("正在连接烈度速报WebSocket...");
-        wsIntensity=new WebSocket(CONFIG.INT_WSS_REAL);
-        wsIntensity.onopen=()=>{
+    
+    wsIntensity = createWebSocket(CONFIG.INT_WSS_REAL, {
+        onOpen: (socket) => {
             console.log("✅ 烈度速报WebSocket连接成功");
-            reconnectCountIntensity=0;
-            isIntInited=true;
-            pingTimerIntensity=setInterval(()=>{
-                if(wsIntensity&&wsIntensity.readyState===1){
-                    try{
-                        wsIntensity.send("ping");
-                    }catch(err){
-                        console.error("发送烈度速报ping失败：",err);
+            reconnectCountIntensity = 0;
+            isIntInited = true;
+            
+            pingTimerIntensity = setInterval(() => {
+                if (socket && socket.readyState === 1) {
+                    try {
+                        socket.send("ping");
+                    } catch (err) {
+                        console.error("发送烈度速报ping失败：", err);
                         clearInterval(pingTimerIntensity);
-                        if(wsIntensity&&wsIntensity.readyState!==3)wsIntensity.close();
+                        if (socket && socket.readyState !== 3) socket.close();
                     }
                 }
-            },5000);
-        };
-        wsIntensity.onmessage=e=>{
-            if(!e.data || e.data === "ping" || !e.data.startsWith("{")) return;
-            try{
-                const data=JSON.parse(e.data);
-                if(data?.eq_id) parseIntensityData(data,true);
-            }catch(err){
-                console.error("❌ 烈度速报数据解析失败：",err,"原始数据：",e.data);
+            }, 5000);
+        },
+        onMessage: (e) => {
+            if (!e.data || e.data === "ping" || !e.data.startsWith("{")) return;
+            try {
+                const data = JSON.parse(e.data);
+                if (data?.eq_id) parseIntensityData(data, true);
+            } catch (err) {
+                console.error("❌ 烈度速报数据解析失败：", err, "原始数据：", e.data);
             }
-        };
-        wsIntensity.onerror=(error)=>{
-            console.error("❌ 烈度速报WebSocket错误：",error);
-            intWssRetry();
-        };
-        wsIntensity.onclose=e=>{
-            console.log(`烈度速报WebSocket关闭：${e.code} - ${e.reason}`);
+        },
+        onClose: (event) => {
+            console.log(`烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
             clearInterval(pingTimerIntensity);
-            wsIntensity=null;
-            if(e.code!==1000)intWssRetry();
-        };
-    }catch(err){
-        console.error("❌ 烈度速报WebSocket初始化失败：",err);
-        intWssRetry();
+            wsIntensity = null;
+            if (event.code !== 1000) {
+                intWssRetry();
+            }
+        },
+        onError: () => {
+            intWssRetry();
+        },
+        reconnectCallback: initIntensityWss,
+        reconnectCount: reconnectCountIntensity++
+    });
+}
+
+// 验证烈度速报数据的完整性
+function validateIntensityData(data) {
+    return data?.eq_id && data?.happen_time && data?.magnitude !== undefined && data?.maxintensity !== undefined;
+}
+
+// 检查数据是否过期
+function isExpiredData(data) {
+    if (data.update_time) {
+        const updateTime = new Date(data.update_time);
+        if (!isNaN(updateTime.getTime())) {
+            return Date.now() - updateTime.getTime() > ONE_DAY;
+        }
     }
+    return false;
+}
+
+// 提取烈度速报的基本信息
+function extractIntensityInfo(data) {
+    return {
+        happenTime: data.happen_time || "未知时间",
+        updateTime: data.update_time || "未知时间",
+        hypocenter: data.hypocenter || "未知震中",
+        mag: data.magnitude || 0,
+        depth: data.depth || "未知",
+        maxInt: data.maxintensity || 0,
+        maxForecastInt: data.maxforecastintensity || 0
+    };
+}
+
+// 生成信息文本
+function generateInfoText(info) {
+    if (typeof info !== 'string' || info.trim() === "" || info.toLowerCase() === "null") {
+        return "";
+    }
+    let processedInfo = info.trim();
+    // 移除最后的标点符号（包括英文标点）
+    processedInfo = processedInfo.replace(/[，。；！？、.,;!?]$/, "");
+    // 替换剩余的英文标点为中文标点
+    processedInfo = processedInfo.replace(/\./g, "，").replace(/,/g, "，").replace(/;/g, "；");
+    return processedInfo + "。";
+}
+
+// 生成台站信息文本
+function generateStationsText(stations) {
+    if (!Array.isArray(stations) || stations.length === 0) {
+        return "";
+    }
+    
+    // 过滤有效站点：计测烈度>最小烈度 且 距离震中≤最大距离
+    const validStations = stations.filter(s => 
+        s.int !== undefined && 
+        s.int > CONFIG.INTENSITY_CONFIG.MIN_INTENSITY && 
+        s.distance <= CONFIG.INTENSITY_CONFIG.MAX_STATION_DISTANCE
+    );
+    
+    if (validStations.length === 0) {
+        return "";
+    }
+    
+    let stationsText = " 部分台站计测烈度信息：";
+    validStations.forEach((st, i) => {
+        // 地区信息
+        const province = st.location_name?.province || "";
+        const city = st.location_name?.city || "";
+        const county = st.location_name?.county || "";
+        const town = st.location_name?.town || "";
+        const area = [province, city, county, town].filter(Boolean).join("");
+        
+        // 核心字段
+        const stationName = st.name || "未知站";
+        const intVal = st.int.toFixed(1);
+        const dist = st.distance.toFixed(1);
+        const forecastInt = st.forecast_int.toFixed(1);
+        const pga = st.pga.toFixed(1);
+        const pgv = st.pgv.toFixed(1);
+
+        // 通顺化拼接
+        stationsText += `${stationName}（${area}）：距震中${dist}公里，计测烈度${intVal}度，预测烈度${forecastInt}度，PGA ${pga}gal，PGV ${pgv}cm/s`;
+        if (i < validStations.length - 1) stationsText += "；";
+    });
+    
+    return stationsText;
 }
 
 // ====================== 最终优化的 parseIntensityData 函数（仅改此处！） ======================
 function parseIntensityData(data, isRealTime) {
-    if (!data?.eq_id || !data?.happen_time || data?.magnitude === undefined || data?.maxintensity === undefined) return;
+    if (!validateIntensityData(data)) return;
 
     const uniqueId = `${data.eq_id}_${data.magnitude}_${data.happen_time}`;
     if (uniqueId === lastIntensity) return;
     lastIntensity = uniqueId;
 
-    let isExpired = false;
-    if (data.update_time) {
-        const updateTime = new Date(data.update_time);
-        if (!isNaN(updateTime.getTime())) {
-            isExpired = Date.now() - updateTime.getTime() > ONE_DAY;
-        }
-    }
-    if (isExpired) {
+    if (isExpiredData(data)) {
         renderHistoryData(2, false, "暂无烈度速报数据");
         return;
     }
 
-    const happenTime = data.happen_time || "未知时间";
-    const updateTime = data.update_time || "未知时间";
-    const hypocenter = data.hypocenter || "未知震中";
-    const mag = data.magnitude || 0;
-    const depth = data.depth || "未知";
-    const maxInt = data.maxintensity || 0;
-    const maxForecastInt = data.maxforecastintensity || 0;
-
-    // 1. info 为空或null则不参与解析
-    let infoText = "";
-    if (typeof data.info === 'string' && data.info.trim() !== "" && data.info.toLowerCase() !== "null") {
-        // 移除最后的标点符号（包括英文标点）
-        let processedInfo = data.info.trim();
-        // 移除最后的标点符号
-        processedInfo = processedInfo.replace(/[，。；！？、.,;!?]$/, "");
-        // 替换剩余的英文标点为中文标点
-        processedInfo = processedInfo.replace(/\./g, "，").replace(/,/g, "，").replace(/;/g, "；");
-        infoText = processedInfo + "。";
-    }
-
-    // 2. 合并所有有效站点数据及信息（从配置中获取筛选条件）
-    let stationsText = "";
-    if (Array.isArray(data.stations) && data.stations.length > 0) {
-        // 过滤有效站点：计测烈度>最小烈度 且 距离震中≤最大距离
-        const validStations = data.stations.filter(s => s.int !== undefined && s.int > CONFIG.INTENSITY_CONFIG.MIN_INTENSITY && s.distance <= CONFIG.INTENSITY_CONFIG.MAX_STATION_DISTANCE);
-
-        if (validStations.length > 0) {
-            // 修改点2：把"各地计测烈度信息："改为"部分台站计测烈度信息："
-            stationsText = " 部分台站计测烈度信息：";
-            validStations.forEach((st, i) => {
-                // 地区信息
-                const province = st.location_name?.province || "";
-                const city = st.location_name?.city || "";
-                const county = st.location_name?.county || "";
-                const town = st.location_name?.town || "";
-                const area = [province, city, county, town].filter(Boolean).join("");
-                
-                // 核心字段
-                const stationName = st.name || "未知站";
-                const intVal = st.int.toFixed(1);
-                const dist = st.distance.toFixed(1);
-                const forecastInt = st.forecast_int.toFixed(1);
-                const pga = st.pga.toFixed(1);
-                const pgv = st.pgv.toFixed(1);
-
-                // 通顺化拼接
-                stationsText += `${stationName}（${area}）：距震中${dist}公里，计测烈度${intVal}度，预测烈度${forecastInt}度，PGA ${pga}gal，PGV ${pgv}cm/s`;
-                if (i < validStations.length - 1) stationsText += "；";
-            });
-        }
-    }
+    const intensityInfo = extractIntensityInfo(data);
+    const infoText = generateInfoText(data.info);
+    const stationsText = generateStationsText(data.stations);
 
     // 最终文本合并成一行在第二行显示
-    const line1 = `中国地震台网中心烈度速报（更新时间：${updateTime}）`;
-    const line2 = `${happenTime} ${hypocenter} 发生<span class="highlight-num">${mag.toFixed(1)}</span>级地震，震源深度<span class="highlight-num">${depth}</span>公里，实测最大烈度<span class="highlight-num">${maxInt.toFixed(1)}</span>度，预测最大烈度<span class="highlight-num">${maxForecastInt.toFixed(1)}</span>度。${infoText}${stationsText}`;
+    const line1 = `中国地震台网中心烈度速报（更新时间：${intensityInfo.updateTime}）`;
+    const line2 = `${intensityInfo.happenTime} ${intensityInfo.hypocenter} 发生<span class="highlight-num">${intensityInfo.mag.toFixed(1)}</span>级地震，震源深度<span class="highlight-num">${intensityInfo.depth}</span>公里，实测最大烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度，预测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度。${infoText}${stationsText}`;
 
     isRealTime ? renderRealTimeData(2, true, line1, line2) : renderHistoryData(2, true, line1, line2);
 }
@@ -562,6 +664,168 @@ function parseWeatherData(data){
     if(curPage === 4) startPageLogic();
 }
 
+// 创建WebSocket连接的通用函数
+function createWebSocket(url, options) {
+    const {
+        onOpen,
+        onMessage,
+        onClose,
+        onError,
+        reconnectCallback,
+        reconnectDelay = 3000,
+        maxReconnectDelay = 30000,
+        maxReconnectAttempts = 5,
+        reconnectCount = 0
+    } = options;
+    
+    // 检查网络状态
+    if (!checkNetworkStatus()) {
+        console.warn(`⚠️  网络连接异常，暂时不连接WebSocket: ${url}`);
+        if (reconnectCallback) {
+            setTimeout(reconnectCallback, reconnectDelay);
+        }
+        return null;
+    }
+    
+    // 检查重连次数限制
+    if (reconnectCount >= maxReconnectAttempts) {
+        console.error(`❌ 重连次数已达上限(${maxReconnectAttempts})，停止重连: ${url}`);
+        // 可以在这里添加通知用户的逻辑
+        return null;
+    }
+    
+    try {
+        console.log(`正在连接WebSocket: ${url} (重连次数: ${reconnectCount})...`);
+        const ws = new WebSocket(url);
+        
+        ws.onopen = () => {
+            console.log(`✅ WebSocket连接成功: ${url}`);
+            if (onOpen) {
+                try {
+                    onOpen(ws);
+                } catch (err) {
+                    console.error("WebSocket onOpen回调失败：", err);
+                }
+            }
+        };
+        
+        ws.onmessage = (e) => {
+            if (onMessage) {
+                try {
+                    onMessage(e, ws);
+                } catch (err) {
+                    console.error("WebSocket onMessage回调失败：", err);
+                }
+            }
+        };
+        
+        ws.onclose = (event) => {
+            console.log(`WebSocket关闭: ${url} - ${event.code} - ${event.reason}`);
+            if (onClose) {
+                try {
+                    onClose(event, ws);
+                } catch (err) {
+                    console.error("WebSocket onClose回调失败：", err);
+                }
+            }
+            
+            // 重连逻辑
+            if (reconnectCallback) {
+                // 计算重连延迟（指数退避）
+                const delay = Math.min(reconnectDelay * Math.pow(2, reconnectCount), maxReconnectDelay);
+                console.log(`将在${delay}ms后尝试重连: ${url} (重连次数: ${reconnectCount + 1})`);
+                setTimeout(reconnectCallback, delay);
+            }
+        };
+        
+        ws.onerror = (error) => {
+            // 更详细的错误处理
+            let errorMessage = "未知错误";
+            if (error.code) {
+                switch (error.code) {
+                    case 1000:
+                        errorMessage = "连接正常关闭";
+                        break;
+                    case 1001:
+                        errorMessage = "端点离开";
+                        break;
+                    case 1002:
+                        errorMessage = "协议错误";
+                        break;
+                    case 1003:
+                        errorMessage = "不支持的数据类型";
+                        break;
+                    case 1004:
+                        errorMessage = "保留";
+                        break;
+                    case 1005:
+                        errorMessage = "无状态码";
+                        break;
+                    case 1006:
+                        errorMessage = "连接异常关闭";
+                        break;
+                    case 1007:
+                        errorMessage = "数据格式错误";
+                        break;
+                    case 1008:
+                        errorMessage = "消息违反政策";
+                        break;
+                    case 1009:
+                        errorMessage = "消息过大";
+                        break;
+                    case 1010:
+                        errorMessage = "扩展协商失败";
+                        break;
+                    case 1011:
+                        errorMessage = "服务器内部错误";
+                        break;
+                    case 1012:
+                        errorMessage = "服务重启";
+                        break;
+                    case 1013:
+                        errorMessage = "暂时不可用";
+                        break;
+                    case 1014:
+                        errorMessage = "错误的网关响应";
+                        break;
+                    case 1015:
+                        errorMessage = "TLS握手失败";
+                        break;
+                    default:
+                        errorMessage = `错误码: ${error.code}`;
+                }
+            }
+            
+            console.error(`❌ WebSocket错误: ${url} - ${errorMessage}`, error);
+            
+            if (onError) {
+                try {
+                    onError(error, ws);
+                } catch (err) {
+                    console.error("WebSocket onError回调失败：", err);
+                }
+            }
+            
+            // 错误时关闭连接，触发重连
+            if (ws && ws.readyState !== 3) {
+                try {
+                    ws.close(1001, "错误重连");
+                } catch (err) {
+                    console.error("WebSocket错误关闭失败：", err);
+                }
+            }
+        };
+        
+        return ws;
+    } catch (err) {
+        console.error(`❌ WebSocket初始化失败: ${url}`, err);
+        if (reconnectCallback) {
+            setTimeout(reconnectCallback, reconnectDelay);
+        }
+        return null;
+    }
+}
+
 function initWebSocket(){
     clearInterval(pingTimer);
     if(ws&&ws.readyState!==3){
@@ -572,94 +836,79 @@ function initWebSocket(){
         }
         ws=null;
     }
-    try{
-        console.log("正在连接WebSocket...");
-        ws=new WebSocket(CONFIG.WS_ALL);
-        ws.onopen=()=>{
-            console.log("✅ WebSocket连接成功");
-            reconnectCount=0;
-            isInited=false;
-            parseMeasureData.source="cenc";
-            measureDataCache={};
+    
+    ws = createWebSocket(CONFIG.WS_ALL, {
+        onOpen: (socket) => {
+            reconnectCount = 0;
+            isInited = false;
+            parseMeasureData.source = "cenc";
+            measureDataCache = {};
             alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
-            lastMeasure="";
-            setTimeout(()=>{
-                if(ws&&ws.readyState===1){
-                    try{
-                        ws.send("query");
+            lastMeasure = "";
+            
+            setTimeout(() => {
+                if (socket && socket.readyState === 1) {
+                    try {
+                        socket.send("query");
                         console.log("已发送查询请求");
-                    }catch(err){
-                        console.error("发送查询请求失败：",err);
+                    } catch (err) {
+                        console.error("发送查询请求失败：", err);
                     }
                 }
-            },50);
-            pingTimer=setInterval(()=>{
-                if(ws&&ws.readyState===1){
-                    try{
-                        ws.send("ping");
-                    }catch(err){
-                        console.error("发送ping失败：",err);
+            }, 50);
+            
+            pingTimer = setInterval(() => {
+                if (socket && socket.readyState === 1) {
+                    try {
+                        socket.send("ping");
+                    } catch (err) {
+                        console.error("发送ping失败：", err);
                         clearInterval(pingTimer);
-                        if(ws&&ws.readyState!==3)ws.close();
+                        if (socket && socket.readyState !== 3) socket.close();
                     }
                 }
-            },5000);
-        };
-        ws.onmessage=e=>{
-            if(!e.data||!e.data.startsWith("{"))return;
-            try{
-                const res=JSON.parse(e.data);
-                if(res.type==="initial_all"){
-                    const initParseMap={"cea-pr":parseAlertData,"cea":parseAlertData,cenc:parseMeasureData,tsunami:parseTsunamiData,weatheralarm:parseWeatherData,ningxia:parseMeasureData,guangxi:parseMeasureData,shanxi:parseMeasureData,beijing:parseMeasureData};
-                    for(const [source,handler]of Object.entries(initParseMap)){
-                        if(res[source]&&res[source].Data){
-                            try{
-                                parseMeasureData.source=source;
+            }, 5000);
+        },
+        onMessage: (e) => {
+            if (!e.data || !e.data.startsWith("{")) return;
+            try {
+                const res = JSON.parse(e.data);
+                if (res.type === "initial_all") {
+                    const initParseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData};
+                    for (const [source, handler] of Object.entries(initParseMap)) {
+                        if (res[source] && res[source].Data) {
+                            try {
+                                parseMeasureData.source = source;
                                 handler(res[source].Data, source);
-                            }catch(err){
-                                console.error(`处理${source}数据失败：`,err);
+                            } catch (err) {
+                                console.error(`处理${source}数据失败：`, err);
                             }
                         }
                     }
-                    isInited=true;
+                    isInited = true;
                     console.log("✅ 初始数据加载完成");
                     return;
                 }
-                if(res.type==="update"&&res.source&&res.Data){
-                    const parseMap={"cea-pr":parseAlertData,"cea":parseAlertData,cenc:parseMeasureData,tsunami:parseTsunamiData,weatheralarm:parseWeatherData,ningxia:parseMeasureData,guangxi:parseMeasureData,shanxi:parseMeasureData,beijing:parseMeasureData};
-                    if(["cenc","ningxia","guangxi","shanxi","beijing"].includes(res.source))parseMeasureData.source=res.source;
-                    try{
-                        parseMap[res.source]&&parseMap[res.source](res.Data, res.source);
-                    }catch(err){
-                        console.error(`处理${res.source}更新数据失败：`,err);
+                if (res.type === "update" && res.source && res.Data) {
+                    const parseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData};
+                    if (["cenc", "ningxia", "guangxi", "shanxi", "beijing"].includes(res.source)) parseMeasureData.source = res.source;
+                    try {
+                        parseMap[res.source] && parseMap[res.source](res.Data, res.source);
+                    } catch (err) {
+                        console.error(`处理${res.source}更新数据失败：`, err);
                     }
                 }
-            }catch(err){
-                console.error("❌ 数据解析失败：",err,"原始数据：",e.data);
+            } catch (err) {
+                console.error("❌ 数据解析失败：", err, "原始数据：", e.data);
             }
-        };
-        ws.onclose=(event)=>{
-            console.log(`WebSocket关闭：${event.code} - ${event.reason}`);
+        },
+        onClose: () => {
             clearInterval(pingTimer);
-            ws=null;
-            const delay=Math.min(3000*Math.pow(2,reconnectCount++),30000);
-            console.log(`将在${delay}ms后尝试重连`);
-            setTimeout(initWebSocket,delay);
-        };
-        ws.onerror=(error)=>{
-            console.error("❌ WebSocket错误：",error);
-            if(ws&&ws.readyState!==3){
-                try{
-                    ws.close(1001,"错误重连");
-                }catch(err){
-                    console.error("WebSocket错误关闭失败：",err);
-                }
-            }
-        };
-    }catch(err){
-        console.error("❌ WebSocket初始化失败：",err);
-        setTimeout(initWebSocket,3000);
-    }
+            ws = null;
+        },
+        reconnectCallback: initWebSocket,
+        reconnectCount: reconnectCount++
+    });
 }
 
 function clearTimer(){
@@ -696,6 +945,36 @@ function startMemoryCleanup(){
     if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
     // 每5分钟清理一次内存
     memoryCleanupTimer=setInterval(clearMemory,5*60*1000);
+}
+
+// 检查当前网络状态
+function checkNetworkStatus() {
+    return navigator.onLine;
+}
+
+// 启动网络状态监听
+function startNetworkMonitor() {
+    // 监听网络连接事件
+    window.addEventListener('online', function() {
+        console.log('✅ 网络已连接');
+        // 网络恢复时，尝试重连WebSocket
+        if (!ws || ws.readyState === 3) {
+            console.log('正在重连主WebSocket...');
+            initWebSocket();
+        }
+        if (!wsIntensity || wsIntensity.readyState === 3) {
+            console.log('正在重连烈度速报WebSocket...');
+            initIntensityWss();
+        }
+    });
+    
+    // 监听网络断开事件
+    window.addEventListener('offline', function() {
+        console.log('❌ 网络已断开');
+        // 网络断开时，可以暂停某些操作或显示提示
+    });
+    
+    console.log('✅ 网络状态监听器已启动');
 }
 
 window.onbeforeunload=()=>{
