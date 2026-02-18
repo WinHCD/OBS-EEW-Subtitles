@@ -397,7 +397,16 @@ function renderRealTimeData(page, isDoubleLine, line1, line2 = "", color = "") {
     forcedTimer = setTimeout(() => {
         isForcedShow = false;
         removeAllTagBlink();
-        startPageLogic();
+        // 检查是否有滚动动画在进行，如果有，等待滚动结束后再恢复自动翻页
+        if (isScrolling || curScrollingLines.length > 0) {
+            setTimeout(() => {
+                if (!isScrolling && curScrollingLines.length === 0) {
+                    startPageLogic();
+                }
+            }, 1000);
+        } else {
+            startPageLogic();
+        }
     }, CONFIG.FORCED_SHOW);
 }
 
@@ -775,28 +784,14 @@ function parseIntensityData(data, isRealTime) {
     const line1 = `中国地震台网中心烈度速报（更新时间：${intensityInfo.updateTime}）`;
     const line2 = `${intensityInfo.happenTime} ${intensityInfo.hypocenter} 发生<span class="highlight-num">${intensityInfo.mag.toFixed(1)}</span>级地震，震源深度<span class="highlight-num">${intensityInfo.depth}</span>公里，实测最大烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度，预测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度。${infoText}${stationsText}`;
 
-    // 检查是否有滚动动画在进行，如果有，等待滚动结束后再更新内容
-    if (isScrolling || curScrollingLines.length > 0) {
-        setTimeout(() => {
-            if (isRealTime) {
-                renderRealTimeData(2, true, line1, line2);
-            } else {
-                renderHistoryData(2, true, line1, line2);
-                // 对于历史数据，确保触发滚动检查
-                if (currentPage === 2) {
-                    startPageLogic();
-                }
-            }
-        }, 1000);
+    // 立即处理数据，确保新数据能够触发强制显示
+    if (isRealTime) {
+        renderRealTimeData(2, true, line1, line2);
     } else {
-        if (isRealTime) {
-            renderRealTimeData(2, true, line1, line2);
-        } else {
-            renderHistoryData(2, true, line1, line2);
-            // 对于历史数据，确保触发滚动检查
-            if (currentPage === 2) {
-                startPageLogic();
-            }
+        renderHistoryData(2, true, line1, line2);
+        // 对于历史数据，确保触发滚动检查
+        if (currentPage === 2) {
+            startPageLogic();
         }
     }
 }
@@ -1022,7 +1017,6 @@ function initWebSocket(){
     webSocket = createWebSocket(CONFIG.WS_ALL, {
         onOpen: (socket) => {
             reconnectCount = 0;
-            isInited = false;
             parseMeasureData.source = "cenc";
             measureDataCache = {};
             alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
@@ -1098,7 +1092,6 @@ function clearTimer(){
 }
 function clearAllTimer(){
     clearTimer();
-    if(forcedTimer){clearTimeout(forcedTimer);forcedTimer=null}
     if(intHttpTimer){clearTimeout(intHttpTimer);intHttpTimer=null}
 }
 
