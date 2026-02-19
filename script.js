@@ -224,27 +224,27 @@ function startLineScroll(lineText, lineItem) {
         lineText.style.webkitTransform = `translate3d(${newPosition}px, 0, 0)`;
         
         if (progress < 1) {
-                animationIds[lineItemId] = requestAnimationFrame(animate);
-            } else {
-                // 滚动结束
-                lineText.style.transform = "";
-                lineText.style.webkitTransform = "";
-                // 清除will-change属性
-                lineText.style.willChange = "";
-                curScrollingLines = curScrollingLines.filter(item => item !== lineItem);
-                isScrolling = false;
-                
-                // 清除动画ID
-                if (animationIds[lineItemId]) {
-                    delete animationIds[lineItemId];
-                }
-                
-                setTimeout(() => {
-                    if (!isForcedShow && curScrollingLines.length === 0) {
-                        doPageTurn();
-                    }
-                }, 100);
+            animationIds[lineItemId] = requestAnimationFrame(animate);
+        } else {
+            // 滚动结束
+            lineText.style.transform = "";
+            lineText.style.webkitTransform = "";
+            // 清除will-change属性
+            lineText.style.willChange = "";
+            curScrollingLines = curScrollingLines.filter(item => item !== lineItem);
+            isScrolling = false;
+            
+            // 清除动画ID
+            if (animationIds[lineItemId]) {
+                delete animationIds[lineItemId];
             }
+            
+            setTimeout(() => {
+                if (!isForcedShow && curScrollingLines.length === 0) {
+                    doPageTurn();
+                }
+            }, 100);
+        }
     }
     
     // 开始动画
@@ -369,44 +369,43 @@ function renderHistoryData(page, isDoubleLine, line1, line2 = "", color = "") {
  * @param {string} color - 文本颜色（可选）
  */
 function renderRealTimeData(page, isDoubleLine, line1, line2 = "", color = "") {
+    // 立即处理数据，确保新数据能够触发强制显示
+    console.log(`✅ 收到新数据，正在显示页面 ${page}`);
+    
+    // 清除所有定时器
     clearAllTimer();
+    
+    // 设置强制显示状态
     isForcedShow = true;
     isScrolling = false;
     
+    // 重置动画和事件监听器
     document.querySelectorAll('.line-text').forEach(text => {
         text.style.animation = "";
         text.style.webkitAnimation = "";
     });
-    dom.wrap.removeEventListener('transitionend', () => {});
-    dom.wrap.removeEventListener('webkitTransitionEnd', () => {});
-
+    
+    // 立即跳转到对应页面
     const targetColor = color || PAGE_COLOR_MAP[page] || "#fff";
-    dom.wrap.style.transition = "none";
-    dom.wrap.style.webkitTransition = "none";
+    dom.wrap.style.transition = `transform ${CONFIG.TRANSITION/1000}s ease-in-out`;
     dom.wrap.style.transform = `translate3d(0, ${-100*page}%, 0)`;
-    dom.wrap.style.webkitTransform = `translate3d(0, ${-100*page}%, 0)`;
-    setTimeout(() => {
-        dom.wrap.style.transition = `transform ${CONFIG.TRANSITION/1000}s ease-in-out`;
-        dom.wrap.style.webkitTransition = `-webkit-transform ${CONFIG.TRANSITION/1000}s ease-in-out`;
-    }, CONFIG.TRANSITION + 50);
+    
+    // 渲染内容
     renderContent(page, isDoubleLine, line1, line2, targetColor);
     currentPage = page;
+    
+    // 添加标签闪烁效果
     addTagBlink(page);
+    
+    // 启动页面逻辑
     startPageLogic();
     
+    // 设置强制显示定时器
     forcedTimer = setTimeout(() => {
+        console.log(`✅ 强制显示时间结束，恢复自动翻页`);
         isForcedShow = false;
         removeAllTagBlink();
-        // 检查是否有滚动动画在进行，如果有，等待滚动结束后再恢复自动翻页
-        if (isScrolling || curScrollingLines.length > 0) {
-            setTimeout(() => {
-                if (!isScrolling && curScrollingLines.length === 0) {
-                    startPageLogic();
-                }
-            }, 1000);
-        } else {
-            startPageLogic();
-        }
+        startPageLogic();
     }, CONFIG.FORCED_SHOW);
 }
 
@@ -416,8 +415,10 @@ function renderRealTimeData(page, isDoubleLine, line1, line2 = "", color = "") {
  * @param {Object} data - 预警数据对象
  * @param {string} source - 数据来源
  */
-function parseAlertData(data, source) {
+function parseAlertData(data, source, isInitial = false) {
     if (!data?.id || !data?.placeName || !data.magnitude) return;
+
+    console.log(`✅ 收到地震预警数据：${data.placeName} ${data.magnitude}级`);
 
     const eventId = data.eventId || `${data.placeName}_${data.magnitude}_${data.shockTime}`;
     const dataTime = new Date(data.shockTime || data.updateTime || Date.now()).getTime();
@@ -446,8 +447,14 @@ function parseAlertData(data, source) {
         line1 = `${(data.province || "未知").trim()}地震局预警第${data.updates || 1}报`;
     }
 
-    const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "unknown"}</span>公里，预计最大烈度<span class="highlight-num">${data.epiIntensity || "未知"}</span>度。`;
-    isInited ? renderRealTimeData(0, true, line1, line2) : renderHistoryData(0, true, line1, line2);
+    const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里，预计最大烈度<span class="highlight-num">${data.epiIntensity || "未知"}</span>度。`;
+    
+    // 根据是否是初始化数据决定使用哪个渲染函数
+    if (isInitial) {
+        renderHistoryData(0, true, line1, line2);
+    } else {
+        renderRealTimeData(0, true, line1, line2);
+    }
 }
 
 /**
@@ -488,7 +495,7 @@ function handleMeasureCache() {
  * 负责处理来自不同地震台网的测定数据
  * @param {Object} data - 台网测定数据对象
  */
-function parseMeasureData(data, source) {
+function parseMeasureData(data, source, isInitial = false) {
     const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", cenc: "中国地震台网中心"};
     const currentSource = source || parseMeasureData.source || "cenc";
     const isCencSource = currentSource === "cenc";
@@ -496,16 +503,19 @@ function parseMeasureData(data, source) {
         renderHistoryData(1, false, "暂无台网测定数据");
         return;
     }
+    
+    console.log(`✅ 收到台网测定数据：${data.placeName} ${data.magnitude}级`);
+
     const uniqueId = isCencSource ? `${data.id}_${data.magnitude}_${data.placeName}_${data.shockTime || Date.now()}` : `${data.eventId || ""}_${data.id || ""}_${data.shockTime}_${data.placeName}_${data.magnitude}_${data.depth || 0}`;
     if (uniqueId === lastMeasure) {
         const latestData = handleMeasureCache();
-        if (latestData) renderMeasureLatest(latestData);
+        if (latestData) renderMeasureLatest(latestData, isInitial);
         return;
     }
     lastMeasure = uniqueId;
     measureDataCache[uniqueId] = {data, source: currentSource, uniqueId};
     const latestData = handleMeasureCache();
-    latestData ? renderMeasureLatest(latestData) : renderHistoryData(1, false, "暂无台网测定数据");
+    latestData ? renderMeasureLatest(latestData, isInitial) : renderHistoryData(1, false, "暂无台网测定数据");
 }
 
 /**
@@ -513,16 +523,24 @@ function parseMeasureData(data, source) {
  * 负责渲染处理后的最新台网测定数据
  * @param {Object} latestItem - 最新台网测定数据项
  */
-function renderMeasureLatest(latestItem) {
+function renderMeasureLatest(latestItem, isInitial = false) {
     const {data, source} = latestItem;
     const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", cenc: "中国地震台网中心"};
     const isFormal = source === "cenc" ? (data.infoTypeName?.includes("正式") || false) : false;
     const isAuto = source === "cenc" ? (data.infoTypeName?.includes("自动") || false) : false;
     const dataType = isFormal ? "正式测定" : (isAuto ? "自动测定" : "测定");
     
+    console.log(`✅ 渲染台网测定数据：${data.placeName} ${data.magnitude}级`);
+
     const line1 = source !== "cenc" ? `${sourceMap[source]}(${dataType})` : `中国地震台网中心${dataType}`;
     const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里。`;
-    isInited ? renderRealTimeData(1, true, line1, line2) : renderHistoryData(1, true, line1, line2);
+    
+    // 根据是否是初始化数据决定使用哪个渲染函数
+    if (isInitial) {
+        renderHistoryData(1, true, line1, line2);
+    } else {
+        renderRealTimeData(1, true, line1, line2);
+    }
 }
 
 /**
@@ -564,7 +582,7 @@ function intHttpRetry() {
 async function getIntEvent(eqId) {
     try {
         const data = await intHttpGet(`${CONFIG.INT_HTTP_EVENT}${eqId}`);
-        parseIntensityData(data, false);
+        parseIntensityData(data, true);
         intensityHttpRetryCount = 0;
     } catch (err) {
         intHttpRetry();
@@ -646,7 +664,7 @@ function initIntensityWss() {
             if (!e.data || e.data === "ping" || !e.data.startsWith("{")) return;
             try {
                 const data = JSON.parse(e.data);
-                if (data?.eq_id) parseIntensityData(data, true);
+                if (data?.eq_id) parseIntensityData(data, false);
             } catch (err) {
                 console.error("❌ 烈度速报数据解析失败：", err, "原始数据：", e.data);
             }
@@ -760,8 +778,10 @@ function generateStationsText(stations) {
 }
 
 // ====================== 最终优化的 parseIntensityData 函数（仅改此处！） ======================
-function parseIntensityData(data, isRealTime) {
+function parseIntensityData(data, isInitial = false) {
     if (!validateIntensityData(data)) return;
+
+    console.log(`✅ 收到烈度速报数据：${data.hypocenter} ${data.magnitude}级`);
 
     const uniqueId = `${data.eq_id}_${data.magnitude}_${data.happen_time}_${data.update_time || Date.now()}`;
     if (uniqueId === lastIntensity) return;
@@ -785,14 +805,14 @@ function parseIntensityData(data, isRealTime) {
     const line2 = `${intensityInfo.happenTime} ${intensityInfo.hypocenter} 发生<span class="highlight-num">${intensityInfo.mag.toFixed(1)}</span>级地震，震源深度<span class="highlight-num">${intensityInfo.depth}</span>公里，实测最大烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度，预测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度。${infoText}${stationsText}`;
 
     // 立即处理数据，确保新数据能够触发强制显示
-    if (isRealTime) {
-        renderRealTimeData(2, true, line1, line2);
-    } else {
+    if (isInitial) {
         renderHistoryData(2, true, line1, line2);
-        // 对于历史数据，确保触发滚动检查
+        // 对于初始化数据，确保触发滚动检查
         if (currentPage === 2) {
             startPageLogic();
         }
+    } else {
+        renderRealTimeData(2, true, line1, line2);
     }
 }
 // ==================================================================================
@@ -801,11 +821,14 @@ function parseIntensityData(data, isRealTime) {
  * 解析海啸预警数据
  * @param {Object} data - 海啸预警数据对象
  */
-function parseTsunamiData(data) {
+function parseTsunamiData(data, source, isInitial = false) {
     if (!data?.id || !data?.warningInfo) {
         renderHistoryData(3, false, "暂无海啸预警数据");
         return;
     }
+    
+    console.log(`✅ 收到海啸预警数据：${data.warningInfo?.title}`);
+
     const uniqueId = `${data.id}_${data.warningInfo?.title}_${data.details?.batch || 1}_${data.updateTime || Date.now()}`;
     if (uniqueId === lastTsunami) return;
     lastTsunami = uniqueId;
@@ -813,14 +836,20 @@ function parseTsunamiData(data) {
     const batch = data.details?.batch || 1;
     const forecast = Array.isArray(data.forecasts) ? data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""}${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
     const line1 = `自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title || "海啸警报"}${warn.subtitle || ""}${forecast ? "，" + forecast : ""}`;
-    isInited ? renderRealTimeData(3, false, line1) : renderHistoryData(3, false, line1);
+    
+    // 根据是否是初始化数据决定使用哪个渲染函数
+    if (isInitial) {
+        renderHistoryData(3, false, line1);
+    } else {
+        renderRealTimeData(3, false, line1);
+    }
 }
 
 /**
  * 解析气象预警数据
  * @param {Object} data - 气象预警数据对象
  */
-function parseWeatherData(data) {
+function parseWeatherData(data, source, isInitial = false) {
     const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: "#9933ff"};
     if (!data?.id || !data?.headline || !data?.description) {
         dom.weatherTag.style.backgroundColor = colorMap["默认"];
@@ -828,6 +857,9 @@ function parseWeatherData(data) {
         lastWeather = "";
         return;
     }
+    
+    console.log(`✅ 收到气象预警数据：${data.headline}`);
+
     const uniqueId = `${data.id}_${data.headline}_${data.description}_${data.effective || ""}_${data.updateTime || Date.now()}`;
     if (uniqueId === lastWeather) return;
     lastWeather = uniqueId;
@@ -837,7 +869,12 @@ function parseWeatherData(data) {
     const line1 = `${data.effective || "未知时间"} ${data.headline}`;
     const line2 = data.description || "请做好相关防范措施";
     
-    CONFIG.WEATHER_FORCED && isInited ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
+    // 根据是否是初始化数据决定使用哪个渲染函数
+    if (isInitial) {
+        renderHistoryData(4, true, line1, line2, targetColor);
+    } else {
+        CONFIG.WEATHER_FORCED ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
+    }
     if (currentPage === 4) startPageLogic();
 }
 
@@ -1014,6 +1051,8 @@ function initWebSocket(){
         webSocket=null;
     }
     
+    isInited = false;
+    
     webSocket = createWebSocket(CONFIG.WS_ALL, {
         onOpen: (socket) => {
             reconnectCount = 0;
@@ -1055,7 +1094,8 @@ function initWebSocket(){
                         if (res[source] && res[source].Data) {
                             try {
                                 parseMeasureData.source = source;
-                                handler(res[source].Data, source);
+                                // 为初始化数据添加一个标识，确保不会强制显示
+                                handler(res[source].Data, source, true);
                             } catch (err) {
                                 console.error(`处理${source}数据失败：`, err);
                             }
@@ -1069,7 +1109,8 @@ function initWebSocket(){
                     const parseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData};
                     if (["cenc", "ningxia", "guangxi", "shanxi", "beijing"].includes(res.source)) parseMeasureData.source = res.source;
                     try {
-                        parseMap[res.source] && parseMap[res.source](res.Data, res.source);
+                        // 处理更新数据，会强制显示
+                        parseMap[res.source] && parseMap[res.source](res.Data, res.source, false);
                     } catch (err) {
                         console.error(`处理${res.source}更新数据失败：`, err);
                     }
@@ -1092,7 +1133,7 @@ function clearTimer(){
 }
 function clearAllTimer(){
     clearTimer();
-    if(intHttpTimer){clearTimeout(intHttpTimer);intHttpTimer=null}
+    if(typeof intHttpTimer !== 'undefined' && intHttpTimer){clearTimeout(intHttpTimer);intHttpTimer=null}
 }
 
 /**
