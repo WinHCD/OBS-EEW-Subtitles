@@ -435,7 +435,7 @@ function parseAlertData(data, source) {
     alertStore.lastSource = source;
     alertStore.lastTime = dataTime;
 
-    const uniqueId = `${data.id}_${data.magnitude}_${data.placeName}`;
+    const uniqueId = `${data.id}_${data.magnitude}_${data.placeName}_${data.shockTime || data.updateTime || Date.now()}`;
     if (uniqueId === lastAlert) return;
     lastAlert = uniqueId;
 
@@ -447,7 +447,7 @@ function parseAlertData(data, source) {
     }
 
     const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "unknown"}</span>公里，预计最大烈度<span class="highlight-num">${data.epiIntensity || "未知"}</span>度。`;
-    renderRealTimeData(0, true, line1, line2);
+    isInited ? renderRealTimeData(0, true, line1, line2) : renderHistoryData(0, true, line1, line2);
 }
 
 /**
@@ -488,15 +488,15 @@ function handleMeasureCache() {
  * 负责处理来自不同地震台网的测定数据
  * @param {Object} data - 台网测定数据对象
  */
-function parseMeasureData(data) {
+function parseMeasureData(data, source) {
     const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", cenc: "中国地震台网中心"};
-    const currentSource = parseMeasureData.source || "cenc";
+    const currentSource = source || parseMeasureData.source || "cenc";
     const isCencSource = currentSource === "cenc";
     if ((isCencSource && (!data?.id || !data?.placeName || !data.magnitude)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude))) {
         renderHistoryData(1, false, "暂无台网测定数据");
         return;
     }
-    const uniqueId = isCencSource ? `${data.id}_${data.magnitude}_${data.placeName}` : `${data.eventId || ""}_${data.id || ""}_${data.shockTime}_${data.placeName}_${data.magnitude}_${data.depth || 0}`;
+    const uniqueId = isCencSource ? `${data.id}_${data.magnitude}_${data.placeName}_${data.shockTime || Date.now()}` : `${data.eventId || ""}_${data.id || ""}_${data.shockTime}_${data.placeName}_${data.magnitude}_${data.depth || 0}`;
     if (uniqueId === lastMeasure) {
         const latestData = handleMeasureCache();
         if (latestData) renderMeasureLatest(latestData);
@@ -522,7 +522,7 @@ function renderMeasureLatest(latestItem) {
     
     const line1 = source !== "cenc" ? `${sourceMap[source]}(${dataType})` : `中国地震台网中心${dataType}`;
     const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里。`;
-    renderRealTimeData(1, true, line1, line2);
+    isInited ? renderRealTimeData(1, true, line1, line2) : renderHistoryData(1, true, line1, line2);
 }
 
 /**
@@ -763,7 +763,7 @@ function generateStationsText(stations) {
 function parseIntensityData(data, isRealTime) {
     if (!validateIntensityData(data)) return;
 
-    const uniqueId = `${data.eq_id}_${data.magnitude}_${data.happen_time}`;
+    const uniqueId = `${data.eq_id}_${data.magnitude}_${data.happen_time}_${data.update_time || Date.now()}`;
     if (uniqueId === lastIntensity) return;
     lastIntensity = uniqueId;
 
@@ -806,14 +806,14 @@ function parseTsunamiData(data) {
         renderHistoryData(3, false, "暂无海啸预警数据");
         return;
     }
-    const uniqueId = `${data.id}_${data.warningInfo?.title}`;
+    const uniqueId = `${data.id}_${data.warningInfo?.title}_${data.details?.batch || 1}_${data.updateTime || Date.now()}`;
     if (uniqueId === lastTsunami) return;
     lastTsunami = uniqueId;
     const warn = data.warningInfo;
     const batch = data.details?.batch || 1;
     const forecast = Array.isArray(data.forecasts) ? data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""}${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
     const line1 = `自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title || "海啸警报"}${warn.subtitle || ""}${forecast ? "，" + forecast : ""}`;
-    renderRealTimeData(3, false, line1);
+    isInited ? renderRealTimeData(3, false, line1) : renderHistoryData(3, false, line1);
 }
 
 /**
@@ -828,7 +828,7 @@ function parseWeatherData(data) {
         lastWeather = "";
         return;
     }
-    const uniqueId = `${data.id}_${data.headline}_${data.description}_${data.effective || ""}`;
+    const uniqueId = `${data.id}_${data.headline}_${data.description}_${data.effective || ""}_${data.updateTime || Date.now()}`;
     if (uniqueId === lastWeather) return;
     lastWeather = uniqueId;
     const level = data.headline.includes("红色") ? "红色" : data.headline.includes("橙色") ? "橙色" : data.headline.includes("黄色") ? "黄色" : data.headline.includes("蓝色") ? "蓝色" : "默认";
@@ -837,7 +837,7 @@ function parseWeatherData(data) {
     const line1 = `${data.effective || "未知时间"} ${data.headline}`;
     const line2 = data.description || "请做好相关防范措施";
     
-    CONFIG.WEATHER_FORCED ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
+    CONFIG.WEATHER_FORCED && isInited ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
     if (currentPage === 4) startPageLogic();
 }
 
