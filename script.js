@@ -447,7 +447,7 @@ function parseAlertData(data, source) {
     }
 
     const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "unknown"}</span>公里，预计最大烈度<span class="highlight-num">${data.epiIntensity || "未知"}</span>度。`;
-    isInited ? renderRealTimeData(0, true, line1, line2) : renderHistoryData(0, true, line1, line2);
+    renderRealTimeData(0, true, line1, line2);
 }
 
 /**
@@ -522,7 +522,7 @@ function renderMeasureLatest(latestItem) {
     
     const line1 = source !== "cenc" ? `${sourceMap[source]}(${dataType})` : `中国地震台网中心${dataType}`;
     const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里。`;
-    isInited ? renderRealTimeData(1, true, line1, line2) : renderHistoryData(1, true, line1, line2);
+    renderRealTimeData(1, true, line1, line2);
 }
 
 /**
@@ -813,7 +813,7 @@ function parseTsunamiData(data) {
     const batch = data.details?.batch || 1;
     const forecast = Array.isArray(data.forecasts) ? data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""}${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
     const line1 = `自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title || "海啸警报"}${warn.subtitle || ""}${forecast ? "，" + forecast : ""}`;
-    isInited ? renderRealTimeData(3, false, line1) : renderHistoryData(3, false, line1);
+    renderRealTimeData(3, false, line1);
 }
 
 /**
@@ -837,7 +837,7 @@ function parseWeatherData(data) {
     const line1 = `${data.effective || "未知时间"} ${data.headline}`;
     const line2 = data.description || "请做好相关防范措施";
     
-    CONFIG.WEATHER_FORCED && isInited ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
+    CONFIG.WEATHER_FORCED ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
     if (currentPage === 4) startPageLogic();
 }
 
