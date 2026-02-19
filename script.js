@@ -97,7 +97,6 @@ function clearDOMCache(page) {
  * 负责处理页面滚动、动画等逻辑
  */
 function startPageLogic() {
-    if (isScrolling || curScrollingLines.length > 0) return;
     clearTimer();
     
     const wrap = dom.contentWraps[currentPage];
@@ -341,7 +340,7 @@ function renderContent(page, isDoubleLine, line1, line2 = "", color = "") {
     // 强制重排，确保样式生效
     wrap.offsetWidth;
 
-    if (currentPage === page && !isForcedShow) {
+    if (currentPage === page) {
         startPageLogic();
     }
 }
@@ -402,10 +401,27 @@ function renderRealTimeData(page, isDoubleLine, line1, line2 = "", color = "") {
     
     // 设置强制显示定时器
     forcedTimer = setTimeout(() => {
-        console.log(`✅ 强制显示时间结束，恢复自动翻页`);
-        isForcedShow = false;
+        console.log(`✅ 强制显示时间结束，准备恢复自动翻页`);
         removeAllTagBlink();
-        startPageLogic();
+        
+        // 检查是否有滚动正在进行
+        if (isScrolling || curScrollingLines.length > 0) {
+            console.log(`⚠️  滚动未完成，等待滚动结束后恢复翻页`);
+            // 等待滚动完成后再恢复正常翻页
+            const checkScrollComplete = setInterval(() => {
+                if (!isScrolling && curScrollingLines.length === 0) {
+                    clearInterval(checkScrollComplete);
+                    isForcedShow = false;
+                    startPageLogic();
+                    console.log(`✅ 滚动已完成，恢复自动翻页`);
+                }
+            }, 100);
+        } else {
+            // 没有滚动正在进行，立即恢复正常翻页
+            isForcedShow = false;
+            startPageLogic();
+            console.log(`✅ 恢复自动翻页`);
+        }
     }, CONFIG.FORCED_SHOW);
 }
 
