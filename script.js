@@ -7,7 +7,7 @@ let isForcedShow=false,isScrolling=false,isInited=false;
 let lastAlert="",lastMeasure="",lastIntensity="",lastTsunami="",lastWeather="";
 let curScrollingLines=[];
 let measureDataCache={};
-let alertStore = { lastEventId: "", lastSource: "", lastTime: 0, lastProvince: "", lastBaseEventId: "" };
+let alertStore = { lastEventId: "", lastSource: "", lastTime: 0, lastProvince: "", lastUpdates: 0 };
 let intensityWebSocket=null,intensityPingTimer=null,intensityReconnectCount=0;
 let intensityHttpTimer=null,intensityHttpRetryCount=0;
 let isIntensityInited=false;
@@ -441,38 +441,75 @@ function parseAlertData(data, source, isInitial = false) {
 
     console.log(`✅ 收到地震预警数据：${data.placeName} ${data.magnitude}级`);
 
-    // 计算数据时间戳
-    const dataTime = new Date(data.shockTime || data.updateTime || Date.now()).getTime();
+    const eventId = data.eventId;
     const isNational = source === "cea";
+    const isProvincial = source === "cea-pr";
 
-    // 生成唯一ID，包含省份信息和时间戳，确保不同省份的预警会被视为不同的数据
-    const uniqueId = `${data.id || Math.random().toString(36).substr(2, 9)}_${data.province || "未知"}_${data.magnitude}_${dataTime}`;
+    // 处理逻辑：
+    // 1. 通过比较 eventId 来判断数据的新旧
+    // 2. eventId 格式为 202509120550.0001，先比较 . 前面的部分，再比较 . 后面的部分
+    // 3. eventId 相同的情况下比较 updates 数值
+    // 4. 优先显示国家级数据
     
-    // 检查是否是重复数据
-    if (uniqueId === lastAlert) {
-        console.log(`⚠️  重复的预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
+    // 检查是否有 eventId
+    if (!eventId) {
+        console.log(`⚠️  缺少 eventId 的预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
         return;
     }
     
-    // 检查是否是旧数据：如果当前数据时间早于或等于最后处理的数据时间，不处理
-    // 只处理最新的数据
-    if (dataTime <= alertStore.lastTime) {
+    // 比较 eventId 的函数
+    function compareEventId(newId, oldId) {
+        if (!oldId) return true; // 没有旧数据，新数据更        
+        const newParts = newId.split('.');
+        const oldParts = oldId.split('.');
+        
+        // 比较 . 前面的部分
+        if (newParts[0] > oldParts[0]) return true;
+        if (newParts[0] < oldParts[0]) return false;
+        
+        // . 前面的部分相同，比较 . 后面的部分
+        if (newParts[1] > oldParts[1]) return true;
+        if (newParts[1] < oldParts[1]) return false;
+        
+        return false; // eventId 相同
+    }
+    
+    // 比较 updates 的函数
+    function compareUpdates(newUpdates, oldUpdates) {
+        return (parseInt(newUpdates) || 0) > (parseInt(oldUpdates) || 0);
+    }
+    
+    // 检查是否是新数据
+    const isEventIdNewer = compareEventId(eventId, alertStore.lastEventId);
+    const isUpdatesNewer = compareUpdates(data.updates, alertStore.lastUpdates);
+    
+    // 处理逻辑：
+    // 1. 如果 eventId 不同，新的 eventId 更晚，处理
+    // 2. 如果 eventId 相同，updates 更大，处理
+    // 3. 如果是国家级数据，且 eventId 相同或更晚，处理
+    // 4. 其他情况，跳过处理
+    if (!isEventIdNewer && !isUpdatesNewer) {
+        if (!isNational && alertStore.lastSource === "cea") {
+            console.log(`⚠️  存在国家级预警数据，跳过处理省级预警数据：${data.placeName} ${data.magnitude}级`);
+            return;
+        }
         console.log(`⚠️  旧预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
         return;
     }
     
-    // 记录处理的预警数据
-    alertStore.lastTime = dataTime;
-    alertStore.lastSource = source;
-    alertStore.lastProvince = data.province || "未知";
-    lastAlert = uniqueId;
+    // 确保不同省份的预警能够被处理
+    console.log(`📊 处理预警数据：省份=${data.province || '未知'}，来源=${source}，eventId=${eventId}，updates=${data.updates || 1}`);
     
-    console.log(`📊 处理预警数据：省份=${data.province || '未知'}，来源=${source}，时间=${dataTime}`);
+    // 记录处理的预警数据
+    alertStore.lastEventId = eventId;
+    alertStore.lastSource = source;
+    alertStore.lastUpdates = data.updates || 1;
+    alertStore.lastProvince = data.province || "未知";
 
+    let line1;
     // 显示逻辑：
     // 1. 国家级数据显示中国地震预警网
     // 2. 省级数据显示省份地震局
-    let line1;
     if (isNational) {
         line1 = `中国地震预警网预警第${data.updates || 1}报`;
     } else if (data.province && data.province.trim() !== "" && data.province.trim() !== "中国") {
