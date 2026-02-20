@@ -7,7 +7,7 @@ let isForcedShow=false,isScrolling=false,isInited=false;
 let lastAlert="",lastMeasure="",lastIntensity="",lastTsunami="",lastWeather="";
 let curScrollingLines=[];
 let measureDataCache={};
-let alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
+let alertStore = { lastEventId: "", lastSource: "", lastTime: 0, lastProvince: "", lastBaseEventId: "" };
 let intensityWebSocket=null,intensityPingTimer=null,intensityReconnectCount=0;
 let intensityHttpTimer=null,intensityHttpRetryCount=0;
 let isIntensityInited=false;
@@ -108,6 +108,11 @@ function startPageLogic() {
     // 使用缓存获取DOM节点
     const lineItems = getCachedDOM(currentPage, ".line-item");
     let hasScrolling = false;
+    
+    // 检查是否有滚动正在进行
+    if (isScrolling || curScrollingLines.length > 0) {
+        return;
+    }
     
     // 重置滚动状态
     isScrolling = false;
@@ -436,29 +441,42 @@ function parseAlertData(data, source, isInitial = false) {
 
     console.log(`✅ 收到地震预警数据：${data.placeName} ${data.magnitude}级`);
 
-    const eventId = data.eventId || `${data.placeName}_${data.magnitude}_${data.shockTime}`;
+    // 计算数据时间戳
     const dataTime = new Date(data.shockTime || data.updateTime || Date.now()).getTime();
-
-    const currentIsNewer = dataTime > alertStore.lastTime;
-    const isSameQuake = alertStore.lastEventId === eventId;
     const isNational = source === "cea";
-    const isProvincial = source === "cea-pr";
 
-    if (currentIsNewer) {}
-    else if (isSameQuake && isProvincial) return;
-    else if (!currentIsNewer) return;
-
-    alertStore.lastEventId = eventId;
-    alertStore.lastSource = source;
+    // 生成唯一ID，包含省份信息和时间戳，确保不同省份的预警会被视为不同的数据
+    const uniqueId = `${data.id || Math.random().toString(36).substr(2, 9)}_${data.province || "未知"}_${data.magnitude}_${dataTime}`;
+    
+    // 检查是否是重复数据
+    if (uniqueId === lastAlert) {
+        console.log(`⚠️  重复的预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
+        return;
+    }
+    
+    // 检查是否是旧数据：如果当前数据时间早于或等于最后处理的数据时间，不处理
+    // 只处理最新的数据
+    if (dataTime <= alertStore.lastTime) {
+        console.log(`⚠️  旧预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
+        return;
+    }
+    
+    // 记录处理的预警数据
     alertStore.lastTime = dataTime;
-
-    const uniqueId = `${data.id}_${data.magnitude}_${data.placeName}_${data.shockTime || data.updateTime || Date.now()}`;
-    if (uniqueId === lastAlert) return;
+    alertStore.lastSource = source;
+    alertStore.lastProvince = data.province || "未知";
     lastAlert = uniqueId;
+    
+    console.log(`📊 处理预警数据：省份=${data.province || '未知'}，来源=${source}，时间=${dataTime}`);
 
+    // 显示逻辑：
+    // 1. 国家级数据显示中国地震预警网
+    // 2. 省级数据显示省份地震局
     let line1;
-    if (source === "cea") {
+    if (isNational) {
         line1 = `中国地震预警网预警第${data.updates || 1}报`;
+    } else if (data.province && data.province.trim() !== "" && data.province.trim() !== "中国") {
+        line1 = `${data.province.trim()}地震局预警第${data.updates || 1}报`;
     } else {
         line1 = `${(data.province || "未知").trim()}地震局预警第${data.updates || 1}报`;
     }
