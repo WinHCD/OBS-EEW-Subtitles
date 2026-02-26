@@ -567,10 +567,10 @@ function handleMeasureCache() {
  * @param {Object} data - 台网测定数据对象
  */
 function parseMeasureData(data, source, isInitial = false) {
-    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", cenc: "中国地震台网中心"};
+    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", shandong: "山东省地震局地震信息", yunnan: "云南省地震局地震信息", cenc: "中国地震台网中心"};
     const currentSource = source || parseMeasureData.source || "cenc";
     const isCencSource = currentSource === "cenc";
-    if ((isCencSource && (!data?.id || !data?.placeName || !data.magnitude)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude))) {
+    if ((isCencSource && (!data?.id || !data?.placeName || !data?.magnitude)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude))) {
         renderHistoryData(1, false, "暂无台网测定数据");
         return;
     }
@@ -596,7 +596,7 @@ function parseMeasureData(data, source, isInitial = false) {
  */
 function renderMeasureLatest(latestItem, isInitial = false) {
     const {data, source} = latestItem;
-    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", cenc: "中国地震台网中心"};
+    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", shandong: "山东省地震局地震信息", yunnan: "云南省地震局地震信息", cenc: "中国地震台网中心"};
     const isFormal = source === "cenc" ? (data.infoTypeName?.includes("正式") || false) : false;
     const isAuto = source === "cenc" ? (data.infoTypeName?.includes("自动") || false) : false;
     const dataType = isFormal ? "正式测定" : (isAuto ? "自动测定" : "测定");
@@ -900,19 +900,59 @@ function parseTsunamiData(data, source, isInitial = false) {
     
     console.log(`✅ 收到海啸预警数据：${data.warningInfo?.title}`);
 
-    const uniqueId = `${data.id}_${data.warningInfo?.title}_${data.details?.batch || 1}_${data.updateTime || Date.now()}`;
+    const uniqueId = `${data.id}_${data.code || data.id}_${data.warningInfo?.title}_${data.details?.batch || 1}_${data.timeInfo?.updateDate || Date.now()}`;
     if (uniqueId === lastTsunami) return;
     lastTsunami = uniqueId;
+    
     const warn = data.warningInfo;
     const batch = data.details?.batch || 1;
+    const shock = data.shockInfo;
+    const time = data.timeInfo;
+    
+    // 处理沿海预报数据
     const forecast = Array.isArray(data.forecasts) ? data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""}${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
-    const line1 = `自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title || "海啸警报"}${warn.subtitle || ""}${forecast ? "，" + forecast : ""}`;
+    
+    // 处理地震信息
+    let shockInfo = "";
+    if (shock) {
+        shockInfo = `${shock.shockTime || "未知时间"} ${shock.placeName || "未知位置"} 发生<span class="highlight-num">${shock.magnitude || 0}</span>级地震，震源深度<span class="highlight-num">${shock.depth || "未知"}</span>公里，震中位于${shock.latitude || ""}°，${shock.longitude || ""}°`;
+    }
+    
+    // 处理监测站数据
+    let monitorInfo = "";
+    if (Array.isArray(data.waterLevelMonitoring) && data.waterLevelMonitoring.length > 0) {
+        const topStations = data.waterLevelMonitoring.slice(0, 3); // 只显示前3个监测站
+        monitorInfo = topStations.map(station => `${station.stationName || "未知站"}（${station.location || "未知位置"}）${station.time || "未知时间"}观测到波高<span class="highlight-num">${station.maxWaveHeight || 0}</span>厘米`).join("；");
+    }
+    
+    // 构建显示文本
+    let line1 = `自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title || "海啸警报"}${warn.subtitle || ""}`;
+    if (forecast) line1 += "，" + forecast;
+    
+    let line2 = "";
+    if (shockInfo) line2 = shockInfo;
+    if (monitorInfo) {
+        if (line2) line2 += "；监测站数据：" + monitorInfo;
+        else line2 = "监测站数据：" + monitorInfo;
+    }
+    
+    // 确保即使只有一行数据也能正确显示
+    if (!line2 && line1) {
+        line2 = line1;
+        line1 = `更新时间：${time?.updateDate || "未知"}`;
+    }
+    
+    console.log(`📊 海啸预警数据显示：`);
+    console.log(`   第一行：${line1}`);
+    console.log(`   第二行：${line2}`);
     
     // 根据是否是初始化数据决定使用哪个渲染函数
     if (isInitial) {
-        renderHistoryData(3, false, line1);
+        console.log(`🔄 初始化数据，使用renderHistoryData`);
+        renderHistoryData(3, true, line1, line2);
     } else {
-        renderRealTimeData(3, false, line1);
+        console.log(`⚡ 实时数据，使用renderRealTimeData`);
+        renderRealTimeData(3, true, line1, line2);
     }
 }
 
@@ -1160,7 +1200,7 @@ function initWebSocket(){
             try {
                 const res = JSON.parse(e.data);
                 if (res.type === "initial_all") {
-                    const initParseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData};
+                    const initParseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
                     for (const [source, handler] of Object.entries(initParseMap)) {
                         if (res[source] && res[source].Data) {
                             try {
@@ -1177,8 +1217,8 @@ function initWebSocket(){
                     return;
                 }
                 if (res.type === "update" && res.source && res.Data) {
-                    const parseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData};
-                    if (["cenc", "ningxia", "guangxi", "shanxi", "beijing"].includes(res.source)) parseMeasureData.source = res.source;
+                    const parseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
+                    if (["cenc", "ningxia", "guangxi", "shanxi", "beijing", "shandong", "yunnan"].includes(res.source)) parseMeasureData.source = res.source;
                     try {
                         // 处理更新数据，会强制显示
                         parseMap[res.source] && parseMap[res.source](res.Data, res.source, false);
