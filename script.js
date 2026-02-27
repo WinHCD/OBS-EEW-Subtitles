@@ -603,7 +603,7 @@ function renderMeasureLatest(latestItem, isInitial = false) {
     
     console.log(`✅ 渲染台网测定数据：${data.placeName} ${data.magnitude}级`);
 
-    const line1 = source !== "cenc" ? `${sourceMap[source]}(${dataType})` : `中国地震台网中心${dataType}`;
+    const line1 = source !== "cenc" ? `${sourceMap[source]}` : `中国地震台网中心${dataType}`;
     const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里。`;
     
     // 根据是否是初始化数据决定使用哪个渲染函数
@@ -910,30 +910,45 @@ function parseTsunamiData(data, source, isInitial = false) {
     const time = data.timeInfo;
     
     // 处理沿海预报数据
-    const forecast = Array.isArray(data.forecasts) ? data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""}${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
+    const forecast = Array.isArray(data.forecasts) && data.forecasts.length > 0 ? "本次地震事件预计会对我国沿岸造成重要影响。预报信息：" + data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""} ${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
     
     // 处理地震信息
     let shockInfo = "";
     if (shock) {
-        shockInfo = `${shock.shockTime || "未知时间"} ${shock.placeName || "未知位置"} 发生<span class="highlight-num">${shock.magnitude || 0}</span>级地震，震源深度<span class="highlight-num">${shock.depth || "未知"}</span>公里，震中位于${shock.latitude || ""}°，${shock.longitude || ""}°`;
+        shockInfo = `${shock.shockTime || "未知时间"} ${shock.placeName || "未知位置"} 发生<span class="highlight-num">${shock.magnitude || 0}</span>级地震，震源深度<span class="highlight-num">${shock.depth || "未知"}</span>公里，震中位于 ${shock.latitude || ""}°，${shock.longitude || ""}°`;
+        if (forecast) {
+            shockInfo += "。" + forecast;
+        } else {
+            // 没有预警信息时添加提示
+            shockInfo += "。本次地震事件预计不会产生海啸，或不会对我国沿岸造成重要影响。";
+        }
+    } else if (forecast) {
+        shockInfo = forecast;
+    } else {
+        // 没有地震信息和预警信息时添加提示
+        shockInfo = "本次地震事件预计不会产生海啸，或不会对我国沿岸造成重要影响。";
     }
     
     // 处理监测站数据
     let monitorInfo = "";
     if (Array.isArray(data.waterLevelMonitoring) && data.waterLevelMonitoring.length > 0) {
         const topStations = data.waterLevelMonitoring.slice(0, 3); // 只显示前3个监测站
-        monitorInfo = topStations.map(station => `${station.stationName || "未知站"}（${station.location || "未知位置"}）${station.time || "未知时间"}观测到波高<span class="highlight-num">${station.maxWaveHeight || 0}</span>厘米`).join("；");
+        monitorInfo = "水位监测信息：" + topStations.map(station => `${station.stationName || "未知站"}（${station.location || "未知位置"}） ${station.time || "未知时间"}观测到波高<span class="highlight-num">${station.maxWaveHeight || 0}</span>厘米`).join("；");
     }
     
     // 构建显示文本
-    let line1 = `自然资源部海啸预警<span class="highlight-num">${batch}</span>期：${warn.title || "海啸警报"}${warn.subtitle || ""}`;
-    if (forecast) line1 += "，" + forecast;
+    let line1 = `自然资源部海啸预警 <span class="highlight-num">${batch}</span> 期：${warn.title || "海啸警报"}`;
     
     let line2 = "";
     if (shockInfo) line2 = shockInfo;
     if (monitorInfo) {
-        if (line2) line2 += "；监测站数据：" + monitorInfo;
-        else line2 = "监测站数据：" + monitorInfo;
+        if (line2) line2 += "。" + monitorInfo;
+        else line2 = monitorInfo;
+    }
+    
+    // 确保以句号封尾
+    if (line2 && !line2.endsWith("。")) {
+        line2 += "。";
     }
     
     // 确保即使只有一行数据也能正确显示
@@ -1212,6 +1227,13 @@ function initWebSocket(){
                             }
                         }
                     }
+                    // 初始化完成后，尝试从缓存中获取最新的台网测定数据
+                    setTimeout(() => {
+                        const latestData = handleMeasureCache();
+                        if (latestData) {
+                            renderMeasureLatest(latestData, true);
+                        }
+                    }, 100);
                     isInited = true;
                     console.log("✅ 初始数据加载完成");
                     return;
