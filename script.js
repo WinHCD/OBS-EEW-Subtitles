@@ -14,7 +14,9 @@ let isIntensityInited=false;
 let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
 let intensityExpiryCheckTimer=null; // 烈度速报过期检查定时器
+let tsunamiExpiryCheckTimer=null; // 海啸预警过期检查定时器
 let currentIntensityData=null; // 当前显示的烈度速报数据
+let currentTsunamiData=null; // 当前显示的海啸预警数据
 let domCache={}; // DOM节点缓存
 
 const dom={
@@ -63,6 +65,7 @@ const dom={
     
     startMemoryCleanup();   // 启动内存清理定时器
     startIntensityExpiryCheck(); // 启动烈度速报过期检查定时器
+    startTsunamiExpiryCheck(); // 启动海啸预警过期检查定时器
     startNetworkMonitor();  // 启动网络状态监听器
     startPageLogic();       // 启动页面逻辑
     
@@ -101,6 +104,13 @@ function startPageLogic() {
     
     const wrap = dom.contentWraps[currentPage];
     if (!wrap) return;
+    
+    // 检查当前页面是否启用
+    if (!CONFIG.PAGE_ENABLED[currentPage]) {
+        // 如果当前页面已禁用，直接切换到下一个页面
+        doPageTurn();
+        return;
+    }
     
     // 清除当前页面的DOM缓存，确保获取最新的DOM结构
     clearDOMCache(currentPage);
@@ -147,7 +157,15 @@ function startPageLogic() {
 function doPageTurn() {
     if (isForcedShow || isScrolling || curScrollingLines.length > 0) return;
     
-    const nextPage = (currentPage + 1) % totalPage;
+    // 找到下一个启用的页面
+    let nextPage = currentPage;
+    for (let i = 1; i <= totalPage; i++) {
+        nextPage = (currentPage + i) % totalPage;
+        if (CONFIG.PAGE_ENABLED[nextPage]) {
+            break;
+        }
+    }
+    
     dom.wrap.style.transform = `translate3d(0, ${-100*nextPage}%, 0)`;
     dom.wrap.style.webkitTransform = `translate3d(0, ${-100*nextPage}%, 0)`;
     
@@ -303,6 +321,14 @@ function renderContent(page, isDoubleLine, line1, line2 = "", color = "") {
     const wrap = dom.contentWraps[page];
     if (!wrap) return;
     
+    // 检查页面是否启用
+    if (!CONFIG.PAGE_ENABLED[page]) {
+        // 清空禁用页面的内容
+        wrap.innerHTML = "";
+        clearDOMCache(page);
+        return;
+    }
+    
     // 使用DocumentFragment批量更新DOM
     const fragment = document.createDocumentFragment();
     const highlightStyle = `style="color:${CONFIG.HIGHLIGHT_COLOR}"`;
@@ -373,6 +399,12 @@ function renderHistoryData(page, isDoubleLine, line1, line2 = "", color = "") {
  * @param {string} color - 文本颜色（可选）
  */
 function renderRealTimeData(page, isDoubleLine, line1, line2 = "", color = "") {
+    // 检查页面是否启用
+    if (!CONFIG.PAGE_ENABLED[page]) {
+        console.log(`⚠️  页面 ${page} 已禁用，跳过显示`);
+        return;
+    }
+    
     // 立即处理数据，确保新数据能够触发强制显示
     console.log(`✅ 收到新数据，正在显示页面 ${page}`);
     
@@ -768,8 +800,16 @@ function validateIntensityData(data) {
 
 // 检查数据是否过期
 function isExpiredData(data) {
+    // 检查烈度速报的更新时间
     if (data.update_time) {
         const updateTime = new Date(data.update_time);
+        if (!isNaN(updateTime.getTime())) {
+            return Date.now() - updateTime.getTime() > ONE_DAY;
+        }
+    }
+    // 检查海啸预警的更新时间
+    if (data.timeInfo && data.timeInfo.updateDate) {
+        const updateTime = new Date(data.timeInfo.updateDate);
         if (!isNaN(updateTime.getTime())) {
             return Date.now() - updateTime.getTime() > ONE_DAY;
         }
@@ -900,6 +940,7 @@ function parseIntensityData(data, isInitial = false) {
 function parseTsunamiData(data, source, isInitial = false) {
     if (!data?.id || !data?.warningInfo) {
         renderHistoryData(3, false, "暂无海啸预警数据");
+        currentTsunamiData = null;
         return;
     }
     
@@ -909,10 +950,26 @@ function parseTsunamiData(data, source, isInitial = false) {
     if (uniqueId === lastTsunami) return;
     lastTsunami = uniqueId;
     
+    // 检查数据是否过期
+    if (isExpiredData(data)) {
+        renderHistoryData(3, false, "暂无海啸预警数据");
+        currentTsunamiData = null;
+        return;
+    }
+    
+    // 保存当前显示的海啸预警数据
+    currentTsunamiData = data;
+    
     const warn = data.warningInfo;
     const batch = data.details?.batch || 1;
     const shock = data.shockInfo;
     const time = data.timeInfo;
+    
+    // 海啸预警颜色映射
+    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: "#9933ff"};
+    // 提取预警级别
+    const level = warn.title?.includes("红色") ? "红色" : warn.title?.includes("橙色") ? "橙色" : warn.title?.includes("黄色") ? "黄色" : warn.title?.includes("蓝色") ? "蓝色" : "默认";
+    const targetColor = colorMap[level];
     
     // 处理沿海预报数据
     const forecast = Array.isArray(data.forecasts) && data.forecasts.length > 0 ? "本次地震事件预计会对我国沿岸造成重要影响。预报信息：" + data.forecasts.map(item => `${item.province || "未知区域"}${item.forecastArea || ""} ${item.estimatedArrivalTime || "未知时间"}到达，波高<span class="highlight-num">${item.maxWaveHeight || 0}</span>厘米`).join("；") : "";
@@ -942,7 +999,7 @@ function parseTsunamiData(data, source, isInitial = false) {
     }
     
     // 构建显示文本
-    let line1 = `自然资源部海啸预警 <span class="highlight-num">${batch}</span> 期：${warn.title || "海啸警报"}`;
+    let line1 = `自然资源部海啸预警 <span class="highlight-num">${batch}</span> 期：${warn.title || "海啸警报"}（更新时间：${time?.updateDate || "未知"}）`;
     
     let line2 = "";
     if (shockInfo) line2 = shockInfo;
@@ -959,20 +1016,22 @@ function parseTsunamiData(data, source, isInitial = false) {
     // 确保即使只有一行数据也能正确显示
     if (!line2 && line1) {
         line2 = line1;
-        line1 = `更新时间：${time?.updateDate || "未知"}`;
+        line1 = ``;
     }
     
     console.log(`📊 海啸预警数据显示：`);
     console.log(`   第一行：${line1}`);
     console.log(`   第二行：${line2}`);
+    console.log(`   预警级别：${level}`);
+    console.log(`   字体颜色：${targetColor}`);
     
     // 根据是否是初始化数据决定使用哪个渲染函数
     if (isInitial) {
         console.log(`🔄 初始化数据，使用renderHistoryData`);
-        renderHistoryData(3, true, line1, line2);
+        renderHistoryData(3, true, line1, line2, targetColor);
     } else {
         console.log(`⚡ 实时数据，使用renderRealTimeData`);
-        renderRealTimeData(3, true, line1, line2);
+        renderRealTimeData(3, true, line1, line2, targetColor);
     }
 }
 
@@ -1327,12 +1386,29 @@ function checkIntensityExpiry() {
     }
 }
 
+// 检查海啸预警数据是否过期的函数
+function checkTsunamiExpiry() {
+    if (currentTsunamiData && isExpiredData(currentTsunamiData)) {
+        console.log("⚠️  海啸预警数据已过期，清理显示");
+        renderHistoryData(3, false, "暂无海啸预警数据");
+        currentTsunamiData = null;
+    }
+}
+
 // 启动烈度速报过期检查定时器
 function startIntensityExpiryCheck() {
     if (intensityExpiryCheckTimer) clearInterval(intensityExpiryCheckTimer);
     // 每10分钟检查一次是否过期
     intensityExpiryCheckTimer = setInterval(checkIntensityExpiry, 10 * 60 * 1000);
     console.log("✅ 烈度速报过期检查定时器已启动");
+}
+
+// 启动海啸预警过期检查定时器
+function startTsunamiExpiryCheck() {
+    if (tsunamiExpiryCheckTimer) clearInterval(tsunamiExpiryCheckTimer);
+    // 每10分钟检查一次是否过期
+    tsunamiExpiryCheckTimer = setInterval(checkTsunamiExpiry, 10 * 60 * 1000);
+    console.log("✅ 海啸预警过期检查定时器已启动");
 }
 
 function startMemoryCleanup() {
@@ -1388,6 +1464,7 @@ window.onbeforeunload=()=>{
     clearAllTimer();
     if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
     if(intensityExpiryCheckTimer)clearInterval(intensityExpiryCheckTimer);
+    if(tsunamiExpiryCheckTimer)clearInterval(tsunamiExpiryCheckTimer);
     if(webSocket&&webSocket.readyState!==3)webSocket.close(1000,"页面关闭");
     measureDataCache={};
     alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };

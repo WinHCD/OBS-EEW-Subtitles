@@ -42,13 +42,25 @@
 | `INTENSITY_CONFIG.MAX_STATION_DISTANCE` | 台站最大距离（公里） | `50` | 20-100 | 只显示距离震中不超过此距离的台站数据 |
 | `INTENSITY_CONFIG.MIN_INTENSITY` | 最小计测烈度 | `0.1` | 0-1 | 只显示计测烈度大于此值的台站数据 |
 
-### 5. 应用信息配置
+### 5. 页面开关配置
+
+| 配置项 | 说明 | 默认值 | 备注 |
+|--------|------|--------|------|
+| `PAGE_ENABLED` | 页面启用状态配置 | 对象 | 控制各个页面的启用状态 |
+| `PAGE_ENABLED[0]` | 地震预警页面启用状态 | `true` | 设置为 `false` 时，地震预警页面将被禁用 |
+| `PAGE_ENABLED[1]` | 台网测定页面启用状态 | `true` | 设置为 `false` 时，台网测定页面将被禁用 |
+| `PAGE_ENABLED[2]` | 烈度速报页面启用状态 | `true` | 设置为 `false` 时，烈度速报页面将被禁用 |
+| `PAGE_ENABLED[3]` | 海啸预警页面启用状态 | `true` | 设置为 `false` 时，海啸预警页面将被禁用 |
+| `PAGE_ENABLED[4]` | 气象预警页面启用状态 | `true` | 设置为 `false` 时，气象预警页面将被禁用 |
+| `PAGE_ENABLED[5]` | 应用信息页面启用状态 | `true` | 设置为 `false` 时，应用信息页面将被禁用 |
+
+### 6. 应用信息配置
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
 | `APP_INFO` | 应用信息文本 | 详细的应用说明文本 | 显示在应用信息页面的文本内容 |
 
-### 6. 页面颜色配置
+### 7. 页面颜色配置
 
 `PAGE_COLOR_MAP` 是一个对象，用于设置不同页面的默认文本颜色：
 
@@ -109,6 +121,14 @@ const CONFIG={
     MAX_RETRY:10,
     RETRY_DELAY:10000,
     HTTP_TIMEOUT:5000,
+    PAGE_ENABLED:{
+        0:true, // 地震预警
+        1:true, // 台网测定
+        2:true, // 烈度速报
+        3:true, // 海啸预警
+        4:true, // 气象预警
+        5:true  // 应用信息
+    },
     INTENSITY_CONFIG:{
         MAX_STATION_DISTANCE:50,
         MIN_INTENSITY:0.1

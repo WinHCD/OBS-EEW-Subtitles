@@ -28,6 +28,15 @@ const CONFIG={
     RETRY_DELAY:10000,
     // HTTP请求超时（毫秒）
     HTTP_TIMEOUT:5000,
+    // 页面开关配置
+    PAGE_ENABLED:{
+        0:true, // 地震预警
+        1:true, // 台网测定
+        2:true, // 烈度速报
+        3:true, // 海啸预警
+        4:true, // 气象预警
+        5:true  // 应用信息
+    },
     // 烈度速报配置
     INTENSITY_CONFIG:{
         MAX_STATION_DISTANCE:50, // 台站最大距离（公里）
