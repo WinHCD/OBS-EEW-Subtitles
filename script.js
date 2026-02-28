@@ -570,8 +570,13 @@ function parseMeasureData(data, source, isInitial = false) {
     const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", shandong: "山东省地震局地震信息", yunnan: "云南省地震局地震信息", cenc: "中国地震台网中心"};
     const currentSource = source || parseMeasureData.source || "cenc";
     const isCencSource = currentSource === "cenc";
-    if ((isCencSource && (!data?.id || !data?.placeName || !data?.magnitude)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude))) {
-        renderHistoryData(1, false, "暂无台网测定数据");
+    if ((isCencSource && (!data?.id || !data?.placeName || !data?.magnitude || data.magnitude === 0)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude || data.magnitude === 0))) {
+        const latestData = handleMeasureCache();
+        if (latestData) {
+            renderMeasureLatest(latestData, isInitial);
+        } else {
+            renderHistoryData(1, false, "暂无台网测定数据");
+        }
         return;
     }
     
