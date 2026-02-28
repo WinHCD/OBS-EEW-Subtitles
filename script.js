@@ -1331,6 +1331,7 @@ function clearTimer(){
 function clearAllTimer(){
     clearTimer();
     if(typeof intHttpTimer !== 'undefined' && intHttpTimer){clearTimeout(intHttpTimer);intHttpTimer=null}
+    if(typeof forcedTimer !== 'undefined' && forcedTimer){clearTimeout(forcedTimer);forcedTimer=null}
 }
 
 /**
