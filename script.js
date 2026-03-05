@@ -119,11 +119,6 @@ function startPageLogic() {
     const lineItems = getCachedDOM(currentPage, ".line-item");
     let hasScrolling = false;
     
-    // 检查是否有滚动正在进行
-    if (isScrolling || curScrollingLines.length > 0) {
-        return;
-    }
-    
     // 重置滚动状态
     isScrolling = false;
     curScrollingLines = [];
@@ -605,7 +600,11 @@ function parseMeasureData(data, source, isInitial = false) {
     if ((isCencSource && (!data?.id || !data?.placeName || !data?.magnitude || data.magnitude === 0)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude || data.magnitude === 0))) {
         const latestData = handleMeasureCache();
         if (latestData) {
-            renderMeasureLatest(latestData, isInitial);
+            // 当数据验证失败时，使用历史数据渲染，不触发强制显示
+            renderHistoryData(1, true, 
+                latestData.source !== "cenc" ? `${sourceMap[latestData.source]}` : `中国地震台网中心${latestData.data.infoTypeName?.includes("正式") ? "正式测定" : latestData.data.infoTypeName?.includes("自动") ? "自动测定" : "测定"}`,
+                `${latestData.data.shockTime || "未知时间"} ${latestData.data.placeName} 发生<span class="highlight-num">${latestData.data.magnitude}</span>级地震，深度<span class="highlight-num">${latestData.data.depth || "未知"}</span>公里。`
+            );
         } else {
             renderHistoryData(1, false, "暂无台网测定数据");
         }
@@ -614,12 +613,36 @@ function parseMeasureData(data, source, isInitial = false) {
     
     console.log(`✅ 收到台网测定数据：${data.placeName} ${data.magnitude}级`);
 
-    const uniqueId = isCencSource ? `${data.id}_${data.magnitude}_${data.placeName}_${data.shockTime || Date.now()}` : `${data.eventId || ""}_${data.id || ""}_${data.shockTime}_${data.placeName}_${data.magnitude}_${data.depth || 0}`;
-    if (uniqueId === lastMeasure) {
-        const latestData = handleMeasureCache();
-        if (latestData) renderMeasureLatest(latestData, isInitial);
-        return;
+    // 生成事件唯一标识，用于去重
+    const eventKey = data.eventId || `${data.placeName}_${data.magnitude}`;
+    
+    // 检查是否是同一事件的相同类型数据
+    const existingItem = Object.values(measureDataCache).find(item => {
+        const itemEventKey = item.data.eventId || `${item.data.placeName}_${item.data.magnitude}`;
+        const isSameEvent = itemEventKey === eventKey;
+        const isSameType = item.data.infoTypeName === data.infoTypeName;
+        return isSameEvent && isSameType;
+    });
+    
+    // 如果是同一事件的相同类型数据，且数据没有变化，则跳过处理
+    if (existingItem) {
+        const existingData = existingItem.data;
+        const isDataSame = 
+            existingData.id === data.id &&
+            existingData.magnitude === data.magnitude &&
+            existingData.placeName === data.placeName &&
+            existingData.shockTime === data.shockTime &&
+            existingData.depth === data.depth &&
+            existingData.infoTypeName === data.infoTypeName;
+        
+        if (isDataSame) {
+            console.log(`⚠️  同一事件的相同类型数据，数据无变化，跳过处理：${data.placeName} ${data.magnitude}级`);
+            return;
+        }
     }
+    
+    // 生成唯一ID用于缓存
+    const uniqueId = isCencSource ? `${data.id}_${data.magnitude}_${data.placeName}_${data.shockTime || Date.now()}_${data.infoTypeName || ""}` : `${data.eventId || ""}_${data.id || ""}_${data.shockTime}_${data.placeName}_${data.magnitude}_${data.depth || 0}`;
     lastMeasure = uniqueId;
     measureDataCache[uniqueId] = {data, source: currentSource, uniqueId};
     const latestData = handleMeasureCache();
