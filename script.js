@@ -594,7 +594,7 @@ function handleMeasureCache() {
  * @param {Object} data - 台网测定数据对象
  */
 function parseMeasureData(data, source, isInitial = false) {
-    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", shandong: "山东省地震局地震信息", yunnan: "云南省地震局地震信息", cenc: "中国地震台网中心"};
+    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", shandong: "山东地震局地震信息", yunnan: "云南地震局地震信息", cenc: "中国地震台网中心"};
     const currentSource = source || parseMeasureData.source || "cenc";
     const isCencSource = currentSource === "cenc";
     if ((isCencSource && (!data?.id || !data?.placeName || !data?.magnitude || data.magnitude === 0)) || (!isCencSource && (!data?.shockTime || !data?.placeName || !data?.magnitude || data.magnitude === 0))) {
@@ -656,7 +656,7 @@ function parseMeasureData(data, source, isInitial = false) {
  */
 function renderMeasureLatest(latestItem, isInitial = false) {
     const {data, source} = latestItem;
-    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", shandong: "山东省地震局地震信息", yunnan: "云南省地震局地震信息", cenc: "中国地震台网中心"};
+    const sourceMap = {ningxia: "宁夏地震局地震信息", guangxi: "广西地震局地震信息", shanxi: "山西地震局地震信息", beijing: "北京地震局地震信息", shandong: "山东地震局地震信息", yunnan: "云南地震局地震信息", cenc: "中国地震台网中心"};
     const isFormal = source === "cenc" ? (data.infoTypeName?.includes("正式") || false) : false;
     const isAuto = source === "cenc" ? (data.infoTypeName?.includes("自动") || false) : false;
     const dataType = isFormal ? "正式测定" : (isAuto ? "自动测定" : "测定");
