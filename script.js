@@ -1079,7 +1079,7 @@ function parseWeatherData(data, source, isInitial = false) {
     const level = data.headline.includes("红色") ? "红色" : data.headline.includes("橙色") ? "橙色" : data.headline.includes("黄色") ? "黄色" : data.headline.includes("蓝色") ? "蓝色" : "默认";
     const targetColor = colorMap[level];
     dom.weatherTag.style.backgroundColor = targetColor;
-    const line1 = `${data.effective || "未知时间"} ${data.headline}`;
+    const line1 = `${data.headline}（生效时间：${data.effective || "未知时间"}）`;
     const line2 = data.description || "请做好相关防范措施";
     
     // 根据是否是初始化数据决定使用哪个渲染函数
