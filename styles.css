@@ -63,19 +63,19 @@ html,body{
     will-change:background-color
 }
 .tag-alert{
-    background:#ff3838
+    background:var(--color-alert, #ff3838)
 }
 .tag-measure{
-    background:#3399ff
+    background:var(--color-measure, #3399ff)
 }
 .tag-intensity{
-    background:#00e0e0
+    background:var(--color-intensity, #00e0e0)
 }
 .tag-tsunami{
-    background:#ff9900
+    background:var(--color-tsunami, #32CD32)
 }
 .tag-weather{
-    background:#9933ff
+    background:var(--color-weather, #9370DB)
 }
 .content-wrap{
     flex:1;
@@ -175,19 +175,19 @@ html,body{
     will-change:opacity
 }
 .alert-item{
-    color:#ff3838
+    color:var(--color-alert, #ff3838)
 }
 .measure-item{
-    color:#3399ff
+    color:var(--color-measure, #3399ff)
 }
 .intensity-item{
-    color:#00e0e0
+    color:var(--color-intensity, #00e0e0)
 }
 .tsunami-item{
-    color:#ff9900
+    color:var(--color-tsunami, #32CD32)
 }
 .weather-item{
-    color:#9933ff
+    color:var(--color-weather, #9370DB)
 }
 .app-info-item .line-text{
     font-size:clamp(16px,2vw,28px);

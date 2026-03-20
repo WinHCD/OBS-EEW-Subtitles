@@ -916,6 +916,19 @@ function generateStationsText(stations) {
     return stationsText;
 }
 
+// 设置CSS变量，使用config.js中的颜色配置
+function setCSSVariables() {
+    const root = document.documentElement;
+    root.style.setProperty('--color-alert', PAGE_COLOR_MAP[0]);
+    root.style.setProperty('--color-measure', PAGE_COLOR_MAP[1]);
+    root.style.setProperty('--color-intensity', PAGE_COLOR_MAP[2]);
+    root.style.setProperty('--color-tsunami', PAGE_COLOR_MAP[3]);
+    root.style.setProperty('--color-weather', PAGE_COLOR_MAP[4]);
+}
+
+// 初始化时设置CSS变量
+setCSSVariables();
+
 // ====================== 最终优化的 parseIntensityData 函数（仅改此处！） ======================
 function parseIntensityData(data, isInitial = false) {
     if (!validateIntensityData(data)) return;
@@ -962,7 +975,7 @@ function parseIntensityData(data, isInitial = false) {
  */
 function parseTsunamiData(data, source, isInitial = false) {
     if (!data?.id || !data?.warningInfo) {
-        renderHistoryData(3, false, "暂无海啸预警数据");
+        renderHistoryData(3, false, "暂无海啸预警数据", "", PAGE_COLOR_MAP[3]);
         currentTsunamiData = null;
         return;
     }
@@ -975,7 +988,7 @@ function parseTsunamiData(data, source, isInitial = false) {
     
     // 检查数据是否过期
     if (isExpiredData(data)) {
-        renderHistoryData(3, false, "暂无海啸预警数据");
+        renderHistoryData(3, false, "暂无海啸预警数据", "", PAGE_COLOR_MAP[3]);
         currentTsunamiData = null;
         return;
     }
@@ -989,7 +1002,7 @@ function parseTsunamiData(data, source, isInitial = false) {
     const time = data.timeInfo;
     
     // 海啸预警颜色映射
-    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: "#9933ff"};
+    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: PAGE_COLOR_MAP[3]};
     // 提取预警级别
     const level = warn.title?.includes("红色") ? "红色" : warn.title?.includes("橙色") ? "橙色" : warn.title?.includes("黄色") ? "黄色" : warn.title?.includes("蓝色") ? "蓝色" : "默认";
     const targetColor = colorMap[level];
@@ -1063,7 +1076,7 @@ function parseTsunamiData(data, source, isInitial = false) {
  * @param {Object} data - 气象预警数据对象
  */
 function parseWeatherData(data, source, isInitial = false) {
-    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: "#9933ff"};
+    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: PAGE_COLOR_MAP[4]};
     if (!data?.id || !data?.headline || !data?.description) {
         dom.weatherTag.style.backgroundColor = colorMap["默认"];
         renderHistoryData(4, false, "暂无气象预警数据", "", colorMap["默认"]);
