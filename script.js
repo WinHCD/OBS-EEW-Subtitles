@@ -256,11 +256,18 @@ function startLineScroll(lineText, lineItem) {
                 delete animationIds[lineItemId];
             }
             
-            setTimeout(() => {
-                if (!isForcedShow && curScrollingLines.length === 0) {
-                    doPageTurn();
-                }
-            }, 100);
+            // 如果处于强制显示状态，重新启动滚动
+            if (isForcedShow) {
+                setTimeout(() => {
+                    startLineScroll(lineText, lineItem);
+                }, 500); // 短暂延迟后重新开始滚动
+            } else {
+                setTimeout(() => {
+                    if (curScrollingLines.length === 0) {
+                        doPageTurn();
+                    }
+                }, 100);
+            }
         }
     }
     
@@ -646,7 +653,22 @@ function parseMeasureData(data, source, isInitial = false) {
     lastMeasure = uniqueId;
     measureDataCache[uniqueId] = {data, source: currentSource, uniqueId};
     const latestData = handleMeasureCache();
-    latestData ? renderMeasureLatest(latestData, isInitial) : renderHistoryData(1, false, "暂无台网测定数据");
+    if (latestData) {
+        // 检查latestData是否就是刚收到的数据
+        const latestUniqueId = isCencSource ? `${latestData.data.id}_${latestData.data.magnitude}_${latestData.data.placeName}_${latestData.data.shockTime || Date.now()}_${latestData.data.infoTypeName || ""}` : `${latestData.data.eventId || ""}_${latestData.data.id || ""}_${latestData.data.shockTime}_${latestData.data.placeName}_${latestData.data.magnitude}_${latestData.data.depth || 0}`;
+        if (latestUniqueId === uniqueId) {
+            // 如果latestData就是刚收到的数据，才强制显示
+            renderMeasureLatest(latestData, isInitial);
+        } else {
+            // 如果latestData是从缓存中获取的其他数据（如更旧的正式测定数据），则使用历史数据渲染
+            renderHistoryData(1, true, 
+                latestData.source !== "cenc" ? `${sourceMap[latestData.source]}` : `中国地震台网中心${latestData.data.infoTypeName?.includes("正式") ? "正式测定" : latestData.data.infoTypeName?.includes("自动") ? "自动测定" : "测定"}`,
+                `${latestData.data.shockTime || "未知时间"} ${latestData.data.placeName} 发生<span class="highlight-num">${latestData.data.magnitude}</span>级地震，深度<span class="highlight-num">${latestData.data.depth || "未知"}</span>公里。`
+            );
+        }
+    } else {
+        renderHistoryData(1, false, "暂无台网测定数据");
+    }
 }
 
 /**
