@@ -11,6 +11,11 @@ let alertStore = { lastEventId: "", lastSource: "", lastTime: 0, lastProvince: "
 let intensityWebSocket=null,intensityPingTimer=null,intensityReconnectCount=0;
 let intensityHttpTimer=null,intensityHttpRetryCount=0;
 let isIntensityInited=false;
+let fanStudioWebSocket=null,fanStudioPingTimer=null,fanStudioReconnectCount=0;
+let isFanStudioInited=false;
+let nowQuakeFailed=false; // NowQuake连接失败标记（用于自动切换到Fan Studio）
+let fanStudioFailed=false; // Fan Studio连接失败标记
+let intensitySourceStopped=false; // 烈度速报数据源停止连接标记
 let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
 let intensityExpiryCheckTimer=null; // 烈度速报过期检查定时器
@@ -57,8 +62,29 @@ const dom={
     if (checkNetworkStatus()) {
         console.log("✅ 网络连接正常，正在初始化WebSocket...");
         initWebSocket();      // 初始化主WebSocket连接
-        initIntensityHttp();  // 初始化烈度速报HTTP请求
-        initIntensityWss();   // 初始化烈度速报WebSocket连接
+        
+        // 重置烈度速报数据源状态
+        nowQuakeFailed = false;
+        fanStudioFailed = false;
+        intensitySourceStopped = false;
+        
+        // 根据配置选择烈度速报数据源
+        // "auto": 优先NowQuake，失败自动切换Fan Studio，都失败则停止
+        // "nowquake": 仅使用NowQuake
+        // "fanstudio": 仅使用Fan Studio
+        const source = CONFIG.INTENSITY_SOURCE || "auto";
+        if (source === "auto") {
+            initIntensityHttp();  // 初始化NowQuake烈度速报HTTP请求
+            initIntensityWss();   // 初始化NowQuake烈度速报WebSocket连接
+            console.log("✅ 烈度速报数据源: NowQuake（自动故障转移模式）");
+        } else if (source === "nowquake") {
+            initIntensityHttp();  // 初始化NowQuake烈度速报HTTP请求
+            initIntensityWss();   // 初始化NowQuake烈度速报WebSocket连接
+            console.log("✅ 使用NowQuake烈度速报数据源");
+        } else if (source === "fanstudio") {
+            initFanStudioWss();   // 初始化Fan Studio烈度速报WebSocket连接
+            console.log("✅ 使用Fan Studio烈度速报数据源");
+        }
     } else {
         console.log("❌ 网络连接异常，将在网络恢复后自动初始化");
     }
@@ -69,7 +95,12 @@ const dom={
     startNetworkMonitor();  // 启动网络状态监听器
     startPageLogic();       // 启动页面逻辑
     
+    const intensitySource = CONFIG.INTENSITY_SOURCE || "auto";
+    const sourceName = intensitySource === "fanstudio" ? "Fan Studio" : 
+                       intensitySource === "both" ? "NowQuake + Fan Studio" : 
+                       intensitySource === "auto" ? "NowQuake（自动故障转移）" : "NowQuake";
     console.log("✅ 预警OBS版初始化完成（包含最终烈度速报解析逻辑）");
+    console.log(`✅ 烈度速报数据源: ${sourceName}`);
     console.log("✅ 内存清理机制已启动");
     console.log("✅ 网络状态监听器已启动");
 })();
@@ -791,7 +822,32 @@ function closeIntWss() {
 function intWssRetry() {
     if (intensityPingTimer) clearInterval(intensityPingTimer);
     if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
+    
+    // 如果已切换到Fan Studio或已停止连接，不再重连
+    if (intensitySourceStopped) {
+        console.log('⚠️ 烈度速报数据源已停止连接，跳过NowQuake重连');
+        return;
+    }
+    
+    const source = CONFIG.INTENSITY_SOURCE || "auto";
+    if (source === "auto" && nowQuakeFailed) {
+        console.log('⚠️ 已切换到Fan Studio，跳过NowQuake重连');
+        return;
+    }
+    
     intensityReconnectCount++;
+    
+    // 检查是否达到最大重试次数，在auto模式下切换到Fan Studio
+    const maxRetry = 5; // 最大重试次数
+    if (intensityReconnectCount >= maxRetry && source === "auto" && !nowQuakeFailed) {
+        nowQuakeFailed = true;
+        console.log(`⚠️  NowQuake烈度速报连接失败（重试${maxRetry}次），自动切换到Fan Studio数据源`);
+        closeIntWss();
+        fanStudioReconnectCount = 0; // 重置Fan Studio重连计数
+        initFanStudioWss();
+        return;
+    }
+    
     const delay = Math.min(3000 * Math.pow(2, intensityReconnectCount), 30000);
     setTimeout(initIntensityWss, delay);
 }
@@ -800,6 +856,18 @@ function intWssRetry() {
  * 初始化烈度速报WebSocket连接
  */
 function initIntensityWss() {
+    // 如果已停止连接或已切换到Fan Studio，不再初始化
+    if (intensitySourceStopped) {
+        console.log('⚠️ 烈度速报数据源已停止连接，跳过NowQuake初始化');
+        return;
+    }
+    
+    const source = CONFIG.INTENSITY_SOURCE || "auto";
+    if (source === "auto" && nowQuakeFailed) {
+        console.log('⚠️ 已切换到Fan Studio，跳过NowQuake初始化');
+        return;
+    }
+    
     closeIntWss();
     
     intensityWebSocket = createWebSocket(CONFIG.INT_WSS_REAL, {
@@ -845,6 +913,129 @@ function initIntensityWss() {
     });
 }
 
+/**
+ * 关闭Fan Studio烈度速报WebSocket连接
+ */
+function closeFanStudioWss() {
+    if (fanStudioWebSocket) {
+        try {
+            fanStudioWebSocket.close(1000, "Fan Studio烈度速报WSS主动关闭");
+            console.log("✅ Fan Studio烈度速报WebSocket已关闭");
+        } catch (err) {
+            console.error("关闭Fan Studio烈度速报WebSocket失败：", err);
+        } finally {
+            fanStudioWebSocket = null;
+        }
+    }
+    if (fanStudioPingTimer) {
+        clearInterval(fanStudioPingTimer);
+        fanStudioPingTimer = null;
+    }
+}
+
+/**
+ * Fan Studio烈度速报WebSocket重连函数
+ */
+function fanStudioWssRetry() {
+    if (fanStudioPingTimer) clearInterval(fanStudioPingTimer);
+    
+    // 如果已停止连接，不再重连
+    if (intensitySourceStopped) {
+        console.log('⚠️ 烈度速报数据源已停止连接，跳过Fan Studio重连');
+        return;
+    }
+    
+    fanStudioReconnectCount++;
+    
+    // 检查是否达到最大重试次数
+    const source = CONFIG.INTENSITY_SOURCE || "auto";
+    const maxRetry = 5; // 最大重试次数
+    
+    if (fanStudioReconnectCount >= maxRetry) {
+        if (source === "auto" && !fanStudioFailed) {
+            // auto模式下，Fan Studio也失败了，停止连接
+            fanStudioFailed = true;
+            intensitySourceStopped = true;
+            console.log(`❌ Fan Studio烈度速报连接失败（重试${maxRetry}次），所有数据源均无法连接，停止重连`);
+            closeFanStudioWss();
+            renderHistoryData(2, false, "暂无烈度速报数据");
+            return;
+        } else if (source === "fanstudio") {
+            // fanstudio模式下，停止连接
+            intensitySourceStopped = true;
+            console.log(`❌ Fan Studio烈度速报连接失败（重试${maxRetry}次），停止重连`);
+            closeFanStudioWss();
+            renderHistoryData(2, false, "暂无烈度速报数据");
+            return;
+        }
+    }
+    
+    const delay = Math.min(3000 * Math.pow(2, fanStudioReconnectCount), 30000);
+    setTimeout(initFanStudioWss, delay);
+}
+
+/**
+ * 初始化Fan Studio烈度速报WebSocket连接
+ */
+function initFanStudioWss() {
+    // 如果已停止连接，不再初始化
+    if (intensitySourceStopped) {
+        console.log('⚠️ 烈度速报数据源已停止连接，跳过Fan Studio初始化');
+        return;
+    }
+    
+    closeFanStudioWss();
+    
+    fanStudioWebSocket = createWebSocket(CONFIG.INT_WSS_FANSTUDIO, {
+        onOpen: (socket) => {
+            console.log("✅ Fan Studio烈度速报WebSocket连接成功");
+            fanStudioReconnectCount = 0;
+            isFanStudioInited = true;
+            
+            fanStudioPingTimer = setInterval(() => {
+                if (socket && socket.readyState === 1) {
+                    try {
+                        socket.send("ping");
+                    } catch (err) {
+                        console.error("发送Fan Studio烈度速报ping失败：", err);
+                        clearInterval(fanStudioPingTimer);
+                        if (socket && socket.readyState !== 3) socket.close();
+                    }
+                }
+            }, 30000);
+        },
+        onMessage: (e) => {
+            if (!e.data || e.data === "ping" || e.data === "pong") return;
+            if (!e.data.startsWith("{")) return;
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === "initial" || msg.type === "update") {
+                    const convertedData = convertFanStudioToNowQuake(msg);
+                    if (convertedData) {
+                        const isInitial = msg.type === "initial";
+                        parseIntensityData(convertedData, isInitial);
+                    }
+                }
+            } catch (err) {
+                console.error("❌ Fan Studio烈度速报数据解析失败：", err, "原始数据：", e.data);
+            }
+        },
+        onClose: (event) => {
+            console.log(`Fan Studio烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
+            clearInterval(fanStudioPingTimer);
+            fanStudioWebSocket = null;
+            if (event.code !== 1000) {
+                fanStudioWssRetry();
+            }
+        },
+        onError: () => {
+            fanStudioWssRetry();
+        },
+        reconnectCallback: initFanStudioWss,
+        reconnectCount: fanStudioReconnectCount++
+    });
+}
+
 // 验证烈度速报数据的完整性
 function validateIntensityData(data) {
     return data?.eq_id && data?.happen_time && data?.magnitude !== undefined && data?.maxintensity !== undefined;
@@ -877,7 +1068,8 @@ function extractIntensityInfo(data) {
         hypocenter: data.hypocenter || "未知震中",
         mag: data.magnitude || 0,
         depth: data.depth || "未知",
-        maxInt: data.maxintensity || 0,
+        maxInt: data.maxintensity || 0, // 计测烈度
+        estimatedInt: data.estimated_intensity || 0, // 推测烈度
         maxForecastInt: data.maxforecastintensity || 0
     };
 }
@@ -920,6 +1112,9 @@ function generateStationsText(stations) {
         return "";
     }
     
+    // 按计测烈度从高到低排序
+    validStations.sort((a, b) => b.int - a.int);
+    
     let stationsText = " 部分台站计测烈度信息：";
     validStations.forEach((st, i) => {
         // 地区信息
@@ -958,6 +1153,71 @@ function setCSSVariables() {
 // 初始化时设置CSS变量
 setCSSVariables();
 
+/**
+ * 从烈度信息文本中解析推测最高烈度
+ * @param {string} infoText - 烈度信息文本
+ * @returns {number} - 推测最高烈度值
+ */
+function parseEstimatedIntensityFromText(infoText) {
+    if (!infoText || typeof infoText !== 'string') return 0;
+    const match = infoText.match(/最高烈度为(\d+(?:\.\d+)?)度/);
+    return match ? parseFloat(match[1]) : 0;
+}
+
+/**
+ * 将Fan Studio数据格式转换为NowQuake格式
+ * @param {Object} fanData - Fan Studio原始数据
+ * @returns {Object} - 转换后的NowQuake格式数据
+ */
+function convertFanStudioToNowQuake(fanData) {
+    if (!fanData) return null;
+    
+    const data = fanData.Data || fanData;
+    
+    const converted = {
+        eq_id: data.uniEventId || String(data.id),
+        happen_time: data.oriTime || "",
+        update_time: data.gmtCreate || "",
+        hypocenter: data.locName || "未知震中",
+        magnitude: parseFloat(data.magnitude) || 0,
+        depth: parseFloat(data.focDepth) || 0,
+        maxintensity: 0, // 计测烈度（从台站数据提取）
+        estimated_intensity: parseEstimatedIntensityFromText(data.intensity_info_text), // 推测烈度
+        maxforecastintensity: 0,
+        info: data.intensity_info_text || "",
+        stations: []
+    };
+    
+    if (Array.isArray(data.instrument_intensity_json) && data.instrument_intensity_json.length > 0) {
+        converted.stations = data.instrument_intensity_json.map(st => ({
+            name: st.stName || st.stID || "未知站",
+            int: st.INT || 0,
+            distance: st.Dist || 0,
+            forecast_int: st.estimateInt || 0,
+            pga: st.PGA || 0,
+            pgv: st.PGV || 0,
+            location_name: {
+                province: st.Province || "",
+                city: st.City || "",
+                county: st.County || "",
+                town: st.Town || ""
+            }
+        }));
+        
+        // 从台站数据中提取最大计测烈度
+        const maxIntStation = converted.stations.reduce((max, st) => 
+            st.int > max.int ? st : max, {int: 0});
+        converted.maxintensity = maxIntStation.int;
+        
+        // 从台站数据中提取最大预测烈度
+        const maxForecastStation = converted.stations.reduce((max, st) => 
+            st.forecast_int > max.forecast_int ? st : max, {forecast_int: 0});
+        converted.maxforecastintensity = maxForecastStation.forecast_int;
+    }
+    
+    return converted;
+}
+
 // ====================== 最终优化的 parseIntensityData 函数（仅改此处！） ======================
 function parseIntensityData(data, isInitial = false) {
     if (!validateIntensityData(data)) return;
@@ -981,9 +1241,27 @@ function parseIntensityData(data, isInitial = false) {
     const infoText = generateInfoText(data.info);
     const stationsText = generateStationsText(data.stations);
 
+    // 构建烈度信息文本
+    let intensityText = "";
+    
+    // 优先显示计测烈度（台站实测）
+    if (intensityInfo.maxInt > 0) {
+        intensityText = `实测最大烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度`;
+    } 
+    // 如果没有计测烈度但有推测烈度，显示推测烈度
+    else if (intensityInfo.estimatedInt > 0) {
+        intensityText = `推测最高烈度<span class="highlight-num">${intensityInfo.estimatedInt.toFixed(1)}</span>度`;
+    }
+    
+    // 只有预测烈度大于0时才显示
+    if (intensityInfo.maxForecastInt > 0) {
+        if (intensityText) intensityText += "，";
+        intensityText += `预测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度`;
+    }
+
     // 最终文本合并成一行在第二行显示
     const line1 = `中国地震台网中心烈度速报（更新时间：${intensityInfo.updateTime}）`;
-    const line2 = `${intensityInfo.happenTime} ${intensityInfo.hypocenter} 发生<span class="highlight-num">${intensityInfo.mag.toFixed(1)}</span>级地震，震源深度<span class="highlight-num">${intensityInfo.depth}</span>公里，实测最大烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度，预测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度。${infoText}${stationsText}`;
+    const line2 = `${intensityInfo.happenTime} ${intensityInfo.hypocenter} 发生<span class="highlight-num">${intensityInfo.mag.toFixed(1)}</span>级地震，震源深度<span class="highlight-num">${intensityInfo.depth}</span>公里${intensityText ? "，" + intensityText : ""}。${infoText}${stationsText}`;
 
     // 立即处理数据，确保新数据能够触发强制显示
     if (isInitial) {
@@ -1503,9 +1781,38 @@ function handleOnlineEvent() {
         console.log('正在重连主WebSocket...');
         initWebSocket();
     }
-    if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
-        console.log('正在重连烈度速报WebSocket...');
-        initIntensityWss();
+    
+    // 根据配置重连烈度速报数据源
+    // 如果所有数据源都已失败，不再重连
+    if (intensitySourceStopped) {
+        console.log('⚠️ 烈度速报数据源已停止连接，跳过重连');
+        return;
+    }
+    
+    const source = CONFIG.INTENSITY_SOURCE || "auto";
+    if (source === "auto") {
+        // auto模式：根据NowQuake是否失败决定重连哪个
+        if (nowQuakeFailed) {
+            if (!fanStudioWebSocket || fanStudioWebSocket.readyState === 3) {
+                console.log('正在重连Fan Studio烈度速报WebSocket...');
+                initFanStudioWss();
+            }
+        } else {
+            if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
+                console.log('正在重连NowQuake烈度速报WebSocket...');
+                initIntensityWss();
+            }
+        }
+    } else if (source === "nowquake") {
+        if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
+            console.log('正在重连NowQuake烈度速报WebSocket...');
+            initIntensityWss();
+        }
+    } else if (source === "fanstudio") {
+        if (!fanStudioWebSocket || fanStudioWebSocket.readyState === 3) {
+            console.log('正在重连Fan Studio烈度速报WebSocket...');
+            initFanStudioWss();
+        }
     }
 }
 
@@ -1536,8 +1843,14 @@ window.onbeforeunload=()=>{
     alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
     clearInterval(intensityPingTimer);
     closeIntWss();
+    clearInterval(fanStudioPingTimer);
+    closeFanStudioWss();
     intensityHttpRetryCount=0;
     intensityReconnectCount=0;
+    fanStudioReconnectCount=0;
+    nowQuakeFailed=false;
+    fanStudioFailed=false;
+    intensitySourceStopped=false;
     
     // 清理网络状态监听器
     window.removeEventListener('online', handleOnlineEvent);

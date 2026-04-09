@@ -6,14 +6,16 @@
 
 ## 配置项详细说明
 
-### 1. 数据源配置（暂未适配其他数据源，非必要请勿修改）
+### 1. 数据源配置
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
 | `WS_ALL` | 所有预警数据的 WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | 包含地震预警、台网测定、海啸预警、气象预警等数据 |
-| `INT_HTTP_LASTID` | 烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 用于获取最新的地震事件 ID |
-| `INT_HTTP_EVENT` | 烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 用于获取特定地震事件的详细信息 |
-| `INT_WSS_REAL` | 烈度速报 WebSocket 接口 - 实时数据 | `wss://api-cencint-public.nowquake.cn/websocket` | 用于获取烈度速报的实时数据 |
+| `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | `"auto"`: 优先NowQuake，失败自动切换Fan Studio；`"nowquake"`: 仅NowQuake；`"fanstudio"`: 仅Fan Studio |
+| `INT_HTTP_LASTID` | NowQuake烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 用于获取最新的地震事件 ID |
+| `INT_HTTP_EVENT` | NowQuake烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 用于获取特定地震事件的详细信息 |
+| `INT_WSS_REAL` | NowQuake烈度速报 WebSocket 接口 - 实时数据 | `wss://api-cencint-public.nowquake.cn/websocket` | 用于获取烈度速报的实时数据 |
+| `INT_WSS_FANSTUDIO` | Fan Studio烈度速报 WebSocket 接口 | `wss://ws.fanstudio.tech/cenc-ir` | Fan Studio烈度速报数据源 |
 
 ### 2. 显示参数配置
 
@@ -103,6 +105,8 @@
 
 ### 数据源配置
 - 修改数据源地址时，请确保新的地址提供与原地址相同格式的数据，否则可能导致数据解析失败
+- `INTENSITY_SOURCE` 设置为 `"auto"` 时，系统会优先尝试 NowQuake 数据源，连接失败（重试5次）后自动切换到 Fan Studio 数据源
+- 当两个数据源都无法连接时，系统将停止重连并显示"暂无烈度速报数据"
 
 ### 显示参数
 - `SCROLL_SPEED` 过高可能导致文本滚动过快，影响阅读
@@ -128,9 +132,11 @@
 ```javascript
 const CONFIG={
     WS_ALL:"wss://ws.fanstudio.tech/all",
+    INTENSITY_SOURCE:"auto",
     INT_HTTP_LASTID:"https://api-cencint-public.nowquake.cn/lastid",
     INT_HTTP_EVENT:"https://api-cencint-public.nowquake.cn/event/",
     INT_WSS_REAL:"wss://api-cencint-public.nowquake.cn/websocket",
+    INT_WSS_FANSTUDIO:"wss://ws.fanstudio.tech/cenc-ir",
     SCROLL_SPEED:120,
     NO_OVERFLOW_DELAY:5000,
     FORCED_SHOW:60000,

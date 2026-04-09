@@ -2,12 +2,20 @@
 const CONFIG={
     // WebSocket连接地址 - 所有预警数据
     WS_ALL:"wss://ws.fanstudio.tech/all",
-    // 烈度速报HTTP接口 - 获取最新事件ID
+    // 烈度速报数据源选择:
+    // "auto" - 优先NowQuake，连接失败自动切换Fan Studio（推荐）
+    // "nowquake" - 仅使用NowQuake
+    // "fanstudio" - 仅使用Fan Studio
+    // "both" - 同时使用两个数据源
+    INTENSITY_SOURCE:"auto",
+    // NowQuake烈度速报HTTP接口 - 获取最新事件ID
     INT_HTTP_LASTID:"https://api-cencint-public.nowquake.cn/lastid",
-    // 烈度速报HTTP接口 - 获取事件详情
+    // NowQuake烈度速报HTTP接口 - 获取事件详情
     INT_HTTP_EVENT:"https://api-cencint-public.nowquake.cn/event/",
-    // 烈度速报WebSocket接口 - 实时数据
+    // NowQuake烈度速报WebSocket接口 - 实时数据
     INT_WSS_REAL:"wss://api-cencint-public.nowquake.cn/websocket",
+    // Fan Studio烈度速报WebSocket接口
+    INT_WSS_FANSTUDIO:"wss://ws.fanstudio.tech/cenc-ir",
     // 滚动速度（像素/秒）
     SCROLL_SPEED:120,
     // 无内容溢出时的翻页延迟（毫秒）
