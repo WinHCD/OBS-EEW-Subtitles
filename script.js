@@ -515,6 +515,7 @@ function parseAlertData(data, source, isInitial = false) {
     
     // 检查是否是新数据
     const isEventIdNewer = compareEventId(eventId, alertStore.lastEventId);
+    const isEventIdOlder = compareEventId(alertStore.lastEventId, eventId);
     const isUpdatesNewer = compareUpdates(data.updates, alertStore.lastUpdates);
     
     // 处理逻辑：
@@ -522,6 +523,12 @@ function parseAlertData(data, source, isInitial = false) {
     // 2. 如果 eventId 相同，updates 更大，处理
     // 3. 如果是国家级数据，且 eventId 相同或更晚，处理
     // 4. 其他情况，跳过处理
+    if (isEventIdOlder) {
+        // eventId 更旧，跳过处理
+        console.log(`⚠️  eventId更旧的预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
+        return;
+    }
+    
     if (!isEventIdNewer && !isUpdatesNewer) {
         if (!isNational && alertStore.lastSource === "cea") {
             console.log(`⚠️  存在国家级预警数据，跳过处理省级预警数据：${data.placeName} ${data.magnitude}级`);
