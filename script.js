@@ -1089,8 +1089,6 @@ function generateInfoText(info) {
         .replace(/!/g, "！")
         .replace(/\?/g, "？")
         .replace(/:/g, "：")
-        .replace(/"/g, "“")
-        .replace(/'/g, "‘")
         .replace(/\(/g, "（")
         .replace(/\)/g, "）");
     return processedInfo;
