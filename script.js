@@ -1067,10 +1067,11 @@ function extractIntensityInfo(data) {
         updateTime: data.update_time || "未知时间",
         hypocenter: data.hypocenter || "未知震中",
         mag: data.magnitude || 0,
-        depth: data.depth || "未知",
-        maxInt: data.maxintensity || 0, // 计测烈度
-        estimatedInt: data.estimated_intensity || 0, // 推测烈度
-        maxForecastInt: data.maxforecastintensity || 0
+        depth: (data.depth !== undefined && data.depth !== null) ? data.depth : "未知",
+        maxInt: data.maxintensity !== undefined ? data.maxintensity : 0, // 计测烈度
+        estimatedInt: data.estimated_intensity !== undefined ? data.estimated_intensity : 0, // 推测烈度
+        maxForecastInt: data.maxforecastintensity !== undefined ? data.maxforecastintensity : 0,
+        source: data.source || "nowquake" // 数据来源：fanstudio 或 nowquake
     };
 }
 
@@ -1185,7 +1186,8 @@ function convertFanStudioToNowQuake(fanData) {
         estimated_intensity: parseEstimatedIntensityFromText(data.intensity_info_text), // 推测烈度
         maxforecastintensity: 0,
         info: data.intensity_info_text || "",
-        stations: []
+        stations: [],
+        source: "fanstudio" // 数据来源标记
     };
     
     if (Array.isArray(data.instrument_intensity_json) && data.instrument_intensity_json.length > 0) {
@@ -1209,7 +1211,7 @@ function convertFanStudioToNowQuake(fanData) {
             st.int > max.int ? st : max, {int: 0});
         converted.maxintensity = maxIntStation.int;
         
-        // 从台站数据中提取最大预测烈度
+        // 从台站数据中提取最大预测烈度（Fan Studio特有）
         const maxForecastStation = converted.stations.reduce((max, st) => 
             st.forecast_int > max.forecast_int ? st : max, {forecast_int: 0});
         converted.maxforecastintensity = maxForecastStation.forecast_int;
@@ -1244,19 +1246,21 @@ function parseIntensityData(data, isInitial = false) {
     // 构建烈度信息文本
     let intensityText = "";
     
-    // 优先显示计测烈度（台站实测）
+    // 优先显示计测烈度（台站实测）- 使用"最大仪器烈度"表述
     if (intensityInfo.maxInt > 0) {
-        intensityText = `实测最大烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度`;
+        intensityText = `最大仪器烈度<span class="highlight-num">${intensityInfo.maxInt.toFixed(1)}</span>度`;
     } 
     // 如果没有计测烈度但有推测烈度，显示推测烈度
     else if (intensityInfo.estimatedInt > 0) {
         intensityText = `推测最高烈度<span class="highlight-num">${intensityInfo.estimatedInt.toFixed(1)}</span>度`;
     }
     
-    // 只有预测烈度大于0时才显示
+    // 预测/推测烈度显示（根据数据来源区分）
     if (intensityInfo.maxForecastInt > 0) {
         if (intensityText) intensityText += "，";
-        intensityText += `预测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度`;
+        // NowQuake显示"推测最大烈度"，Fan Studio显示"最大仪器预测烈度"
+        const forecastLabel = intensityInfo.source === "fanstudio" ? "最大仪器预测烈度" : "推测最大烈度";
+        intensityText += `${forecastLabel}<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度`;
     }
 
     // 最终文本合并成一行在第二行显示
