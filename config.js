@@ -30,12 +30,16 @@ const CONFIG={
     MIN_HEIGHT:60,
     // 高亮文本颜色
     HIGHLIGHT_COLOR:"#fff",
-    // 最大重试次数
-    MAX_RETRY:10,
+    // HTTP请求最大重试次数
+    MAX_HTTP_RETRY:10,
     // 重试延迟（毫秒）
     RETRY_DELAY:10000,
     // HTTP请求超时（毫秒）
     HTTP_TIMEOUT:5000,
+    // WebSocket最大重连次数（0为不限制）
+    MAX_WS_RECONNECT:0,
+    // 是否显示网络状态提示
+    SHOW_NETWORK_STATUS:true,
     // 页面开关配置
     PAGE_ENABLED:{
         0:true, // 地震预警

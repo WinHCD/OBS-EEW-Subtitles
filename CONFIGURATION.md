@@ -33,9 +33,11 @@
 
 | 配置项 | 说明 | 默认值 | 推荐范围 | 备注 |
 |--------|------|--------|----------|------|
-| `MAX_RETRY` | 最大重试次数 | `10` | 5-20 | 网络请求失败后的最大重试次数 |
+| `MAX_HTTP_RETRY` | HTTP 请求最大重试次数 | `10` | 5-20 | HTTP 请求失败后的最大重试次数 |
 | `RETRY_DELAY` | 重试延迟（毫秒） | `10000` | 5000-30000 | 网络请求失败后，重试的间隔时间 |
 | `HTTP_TIMEOUT` | HTTP 请求超时（毫秒） | `5000` | 3000-10000 | HTTP 请求的超时时间 |
+| `MAX_WS_RECONNECT` | WebSocket 最大重连次数 | `0` | 0-20 | `0` 表示不限制重连次数；设置大于 0 的值时，达到该次数后停止重连 |
+| `SHOW_NETWORK_STATUS` | 是否显示网络状态提示 | `true` | `true`/`false` | 设置为 `false` 时，网络断开或数据源连接失败时不显示提示信息 |
 
 ### 4. 烈度速报配置
 
@@ -105,8 +107,9 @@
 
 ### 数据源配置
 - 修改数据源地址时，请确保新的地址提供与原地址相同格式的数据，否则可能导致数据解析失败
-- `INTENSITY_SOURCE` 设置为 `"auto"` 时，系统会优先尝试 NowQuake 数据源，连接失败（重试5次）后自动切换到 Fan Studio 数据源
+- `INTENSITY_SOURCE` 设置为 `"auto"` 时，系统会优先尝试 NowQuake 数据源，连接失败后自动切换到 Fan Studio 数据源
 - 当两个数据源都无法连接时，系统将停止重连并显示"暂无烈度速报数据"
+- `MAX_WS_RECONNECT` 设置为 `0` 时，WebSocket 连接将无限重连；设置为大于 0 的值时，达到该次数后停止重连
 
 ### 显示参数
 - `SCROLL_SPEED` 过高可能导致文本滚动过快，影响阅读
@@ -114,9 +117,11 @@
 - `FORCED_SHOW` 过长可能导致重要信息被长时间显示，影响其他信息的展示
 
 ### 网络请求配置
-- `MAX_RETRY` 过大可能导致在网络完全不可用时，应用持续尝试重连
+- `MAX_HTTP_RETRY` 过大可能导致在网络完全不可用时，应用持续尝试重连
+- `MAX_WS_RECONNECT` 过大可能导致 WebSocket 连接失败后持续重连；设置为 `0` 可无限重连
 - `RETRY_DELAY` 过短可能导致在网络不稳定时，频繁的重连尝试
 - `HTTP_TIMEOUT` 过短可能导致在网络延迟较高时，正常的请求被判定为超时
+- `SHOW_NETWORK_STATUS` 设置为 `false` 时，用户将无法看到网络断开或数据源连接失败的提示
 
 ### 烈度速报配置
 - `MAX_STATION_DISTANCE` 过大可能导致显示过多的台站数据，影响页面美观
@@ -144,9 +149,11 @@ const CONFIG={
     WEATHER_FORCED:false,
     MIN_HEIGHT:60,
     HIGHLIGHT_COLOR:"#fff",
-    MAX_RETRY:10,
+    MAX_HTTP_RETRY:10,
     RETRY_DELAY:10000,
     HTTP_TIMEOUT:5000,
+    MAX_WS_RECONNECT:0,
+    SHOW_NETWORK_STATUS:true,
     PAGE_ENABLED:{
         0:true, // 地震预警
         1:true, // 台网测定

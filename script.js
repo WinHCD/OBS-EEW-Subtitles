@@ -759,8 +759,10 @@ async function intHttpGet(url) {
 function intHttpRetry() {
     if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
     intensityHttpRetryCount++;
-    if (intensityHttpRetryCount >= CONFIG.MAX_RETRY) {
-        renderHistoryData(2, false, "暂无烈度速报数据");
+    if (intensityHttpRetryCount >= CONFIG.MAX_HTTP_RETRY) {
+        if (CONFIG.SHOW_NETWORK_STATUS) {
+            renderHistoryData(2, false, "NowQuake HTTP接口连接失败");
+        }
         return;
     }
     intensityHttpTimer = setTimeout(initIntensityHttp, CONFIG.RETRY_DELAY);
@@ -785,7 +787,7 @@ async function getIntEvent(eqId) {
  */
 async function initIntensityHttp() {
     if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
-    if (intensityHttpRetryCount >= CONFIG.MAX_RETRY) return;
+    if (intensityHttpRetryCount >= CONFIG.MAX_HTTP_RETRY) return;
     try {
         const lastIdData = await intHttpGet(CONFIG.INT_HTTP_LASTID);
         const eqId = lastIdData.eq_id;
@@ -837,13 +839,15 @@ function intWssRetry() {
     
     intensityReconnectCount++;
     
-    // 检查是否达到最大重试次数，在auto模式下切换到Fan Studio
-    const maxRetry = 5; // 最大重试次数
-    if (intensityReconnectCount >= maxRetry && source === "auto" && !nowQuakeFailed) {
+    const maxRetry = CONFIG.MAX_WS_RECONNECT || 0;
+    if (maxRetry > 0 && intensityReconnectCount >= maxRetry && source === "auto" && !nowQuakeFailed) {
         nowQuakeFailed = true;
-        console.log(`⚠️  NowQuake烈度速报连接失败（重试${maxRetry}次），自动切换到Fan Studio数据源`);
+        console.log(`⚠️  NowQuake烈度速报连接失败（重试${intensityReconnectCount}次），自动切换到Fan Studio数据源`);
         closeIntWss();
-        fanStudioReconnectCount = 0; // 重置Fan Studio重连计数
+        fanStudioReconnectCount = 0;
+        if (CONFIG.SHOW_NETWORK_STATUS) {
+            renderHistoryData(2, false, "NowQuake数据源连接失败，正在切换到Fan Studio...");
+        }
         initFanStudioWss();
         return;
     }
@@ -875,6 +879,9 @@ function initIntensityWss() {
             console.log("✅ 烈度速报WebSocket连接成功");
             intensityReconnectCount = 0;
             isIntensityInited = true;
+            
+            // 连接成功后重置烈度速报页面显示
+            resetIntensityPageToDefault();
             
             intensityPingTimer = setInterval(() => {
                 if (socket && socket.readyState === 1) {
@@ -947,25 +954,26 @@ function fanStudioWssRetry() {
     
     fanStudioReconnectCount++;
     
-    // 检查是否达到最大重试次数
     const source = CONFIG.INTENSITY_SOURCE || "auto";
-    const maxRetry = 5; // 最大重试次数
+    const maxRetry = CONFIG.MAX_WS_RECONNECT || 0;
     
-    if (fanStudioReconnectCount >= maxRetry) {
+    if (maxRetry > 0 && fanStudioReconnectCount >= maxRetry) {
         if (source === "auto" && !fanStudioFailed) {
-            // auto模式下，Fan Studio也失败了，停止连接
             fanStudioFailed = true;
             intensitySourceStopped = true;
-            console.log(`❌ Fan Studio烈度速报连接失败（重试${maxRetry}次），所有数据源均无法连接，停止重连`);
+            console.log(`❌ Fan Studio烈度速报连接失败（重试${fanStudioReconnectCount}次），所有数据源均无法连接，停止重连`);
             closeFanStudioWss();
-            renderHistoryData(2, false, "暂无烈度速报数据");
+            if (CONFIG.SHOW_NETWORK_STATUS) {
+                renderHistoryData(2, false, "所有烈度速报数据源均无法连接");
+            }
             return;
         } else if (source === "fanstudio") {
-            // fanstudio模式下，停止连接
             intensitySourceStopped = true;
-            console.log(`❌ Fan Studio烈度速报连接失败（重试${maxRetry}次），停止重连`);
+            console.log(`❌ Fan Studio烈度速报连接失败（重试${fanStudioReconnectCount}次），停止重连`);
             closeFanStudioWss();
-            renderHistoryData(2, false, "暂无烈度速报数据");
+            if (CONFIG.SHOW_NETWORK_STATUS) {
+                renderHistoryData(2, false, "Fan Studio数据源连接失败");
+            }
             return;
         }
     }
@@ -991,6 +999,9 @@ function initFanStudioWss() {
             console.log("✅ Fan Studio烈度速报WebSocket连接成功");
             fanStudioReconnectCount = 0;
             isFanStudioInited = true;
+            
+            // 连接成功后重置烈度速报页面显示
+            resetIntensityPageToDefault();
             
             fanStudioPingTimer = setInterval(() => {
                 if (socket && socket.readyState === 1) {
@@ -1413,6 +1424,34 @@ function parseWeatherData(data, source, isInitial = false) {
     if (currentPage === 4) startPageLogic();
 }
 
+/**
+ * 重置页面显示为默认状态
+ * 用于连接恢复后清除失败提示
+ */
+function resetPagesToDefault() {
+    if (CONFIG.PAGE_ENABLED[0]) {
+        renderHistoryData(0, false, "暂无地震预警数据");
+    }
+    if (CONFIG.PAGE_ENABLED[1]) {
+        renderHistoryData(1, false, "暂无台网测定数据");
+    }
+    if (CONFIG.PAGE_ENABLED[3]) {
+        renderHistoryData(3, false, "暂无海啸预警数据", "", PAGE_COLOR_MAP[3]);
+    }
+    if (CONFIG.PAGE_ENABLED[4]) {
+        renderHistoryData(4, false, "暂无气象预警数据", "", PAGE_COLOR_MAP[4]);
+    }
+}
+
+/**
+ * 重置烈度速报页面显示为默认状态
+ */
+function resetIntensityPageToDefault() {
+    if (CONFIG.PAGE_ENABLED[2]) {
+        renderHistoryData(2, false, "暂无烈度速报数据");
+    }
+}
+
 // 创建WebSocket连接的通用函数
 function createWebSocket(url, options) {
     const {
@@ -1420,10 +1459,11 @@ function createWebSocket(url, options) {
         onMessage,
         onClose,
         onError,
+        onFailed,
         reconnectCallback,
         reconnectDelay = 3000,
         maxReconnectDelay = 30000,
-        maxReconnectAttempts = 5,
+        maxReconnectAttempts = CONFIG.MAX_WS_RECONNECT || 0,
         reconnectCount = 0
     } = options;
     
@@ -1436,10 +1476,16 @@ function createWebSocket(url, options) {
         return null;
     }
     
-    // 检查重连次数限制
-    if (reconnectCount >= maxReconnectAttempts) {
+    // 检查重连次数限制（0表示不限制）
+    if (maxReconnectAttempts > 0 && reconnectCount >= maxReconnectAttempts) {
         console.error(`❌ 重连次数已达上限(${maxReconnectAttempts})，停止重连: ${url}`);
-        // 可以在这里添加通知用户的逻辑
+        if (onFailed) {
+            try {
+                onFailed();
+            } catch (err) {
+                console.error("WebSocket onFailed回调失败：", err);
+            }
+        }
         return null;
     }
     
@@ -1596,6 +1642,9 @@ function initWebSocket(){
             alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
             lastMeasure = "";
             
+            // 连接成功后重置页面显示
+            resetPagesToDefault();
+            
             setTimeout(() => {
                 if (socket && socket.readyState === 1) {
                     try {
@@ -1664,6 +1713,22 @@ function initWebSocket(){
         onClose: () => {
             clearInterval(pingTimer);
             webSocket = null;
+        },
+        onFailed: () => {
+            console.log('❌ 主WebSocket连接失败，停止重连');
+            if (!CONFIG.SHOW_NETWORK_STATUS) return;
+            if (CONFIG.PAGE_ENABLED[0]) {
+                renderHistoryData(0, false, "数据源连接失败");
+            }
+            if (CONFIG.PAGE_ENABLED[1]) {
+                renderHistoryData(1, false, "数据源连接失败");
+            }
+            if (CONFIG.PAGE_ENABLED[3]) {
+                renderHistoryData(3, false, "数据源连接失败", "", PAGE_COLOR_MAP[3]);
+            }
+            if (CONFIG.PAGE_ENABLED[4]) {
+                renderHistoryData(4, false, "数据源连接失败", "", PAGE_COLOR_MAP[4]);
+            }
         },
         reconnectCallback: initWebSocket,
         reconnectCount: reconnectCount++
@@ -1778,6 +1843,23 @@ function checkNetworkStatus() {
 // 网络连接事件处理函数
 function handleOnlineEvent() {
     console.log('✅ 网络已连接');
+    
+    // 重置数据源失败状态（网络恢复后重新尝试）
+    if (intensitySourceStopped) {
+        console.log('✅ 网络恢复，重置数据源状态');
+        nowQuakeFailed = false;
+        fanStudioFailed = false;
+        intensitySourceStopped = false;
+        intensityReconnectCount = 0;
+        fanStudioReconnectCount = 0;
+    }
+    
+    // 网络恢复时立即重置页面显示
+    if (CONFIG.SHOW_NETWORK_STATUS) {
+        resetPagesToDefault();
+        resetIntensityPageToDefault();
+    }
+    
     // 网络恢复时，尝试重连WebSocket
     if (!webSocket || webSocket.readyState === 3) {
         console.log('正在重连主WebSocket...');
@@ -1785,12 +1867,6 @@ function handleOnlineEvent() {
     }
     
     // 根据配置重连烈度速报数据源
-    // 如果所有数据源都已失败，不再重连
-    if (intensitySourceStopped) {
-        console.log('⚠️ 烈度速报数据源已停止连接，跳过重连');
-        return;
-    }
-    
     const source = CONFIG.INTENSITY_SOURCE || "auto";
     if (source === "auto") {
         // auto模式：根据NowQuake是否失败决定重连哪个
@@ -1821,7 +1897,25 @@ function handleOnlineEvent() {
 // 网络断开事件处理函数
 function handleOfflineEvent() {
     console.log('❌ 网络已断开');
-    // 网络断开时，可以暂停某些操作或显示提示
+    
+    if (!CONFIG.SHOW_NETWORK_STATUS) return;
+    
+    // 在各页面显示网络断开提示
+    if (CONFIG.PAGE_ENABLED[0]) {
+        renderHistoryData(0, false, "网络已断开，正在等待恢复...");
+    }
+    if (CONFIG.PAGE_ENABLED[1]) {
+        renderHistoryData(1, false, "网络已断开，正在等待恢复...");
+    }
+    if (CONFIG.PAGE_ENABLED[2]) {
+        renderHistoryData(2, false, "网络已断开，正在等待恢复...");
+    }
+    if (CONFIG.PAGE_ENABLED[3]) {
+        renderHistoryData(3, false, "网络已断开，正在等待恢复...", "", PAGE_COLOR_MAP[3]);
+    }
+    if (CONFIG.PAGE_ENABLED[4]) {
+        renderHistoryData(4, false, "网络已断开，正在等待恢复...", "", PAGE_COLOR_MAP[4]);
+    }
 }
 
 function startNetworkMonitor() {
