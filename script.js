@@ -23,6 +23,28 @@ let tsunamiExpiryCheckTimer=null; // 海啸预警过期检查定时器
 let currentIntensityData=null; // 当前显示的烈度速报数据
 let currentTsunamiData=null; // 当前显示的海啸预警数据
 let domCache={}; // DOM节点缓存
+let isConnectingMainWs=false; // 主WebSocket连接锁
+let isConnectingIntensityWs=false; // 烈度速报WebSocket连接锁
+let isConnectingFanStudioWs=false; // Fan Studio WebSocket连接锁
+let networkStatusDisplayed=false; // 网络状态是否已显示标记
+
+// 数据源连接状态追踪
+let dataSourceStatus = {
+    main: { connected: false, errorType: null, errorMessage: null }, // 主数据源（地震预警等）
+    intensity: { connected: false, errorType: null, errorMessage: null }, // 烈度速报NowQuake
+    fanStudio: { connected: false, errorType: null, errorMessage: null }  // 烈度速报Fan Studio
+};
+
+// 错误类型枚举
+const ERROR_TYPES = {
+    NETWORK: 'network',           // 网络问题
+    SERVER_ERROR: 'server_error', // 服务器内部错误
+    SERVER_RESTART: 'server_restart', // 服务重启
+    SERVER_UNAVAILABLE: 'server_unavailable', // 服务暂时不可用
+    PROTOCOL_ERROR: 'protocol_error', // 协议错误
+    CONNECTION_REFUSED: 'connection_refused', // 连接被拒绝
+    NORMAL_CLOSE: 'normal_close'  // 正常关闭
+};
 
 const dom={
     wrap:document.getElementById("mainScrollWrapper"),
@@ -872,16 +894,25 @@ function initIntensityWss() {
         return;
     }
     
+    if (isConnectingIntensityWs) {
+        console.log('⚠️ 烈度速报WebSocket正在连接中，跳过重复连接');
+        return;
+    }
+    
+    isConnectingIntensityWs = true;
     closeIntWss();
     
     intensityWebSocket = createWebSocket(CONFIG.INT_WSS_REAL, {
         onOpen: (socket) => {
+            isConnectingIntensityWs = false; // 释放连接锁
+            markDataSourceConnected('intensity'); // 标记NowQuake数据源已连接
             console.log("✅ 烈度速报WebSocket连接成功");
             intensityReconnectCount = 0;
             isIntensityInited = true;
             
-            // 连接成功后重置烈度速报页面显示
-            resetIntensityPageToDefault();
+            // 连接成功后重新初始化（通过HTTP获取最新数据）
+            console.log("🔄 烈度速报WebSocket重连成功，正在重新初始化...");
+            initIntensityHttp();
             
             intensityPingTimer = setInterval(() => {
                 if (socket && socket.readyState === 1) {
@@ -905,7 +936,12 @@ function initIntensityWss() {
             }
         },
         onClose: (event) => {
+            isConnectingIntensityWs = false; // 释放连接锁
             console.log(`烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
+            // 更新NowQuake数据源状态（如果不是正常关闭）
+            if (event.code !== 1000) {
+                updateDataSourceStatus('intensity', event.code, intensityReconnectCount);
+            }
             clearInterval(intensityPingTimer);
             intensityWebSocket = null;
             if (event.code !== 1000) {
@@ -913,6 +949,7 @@ function initIntensityWss() {
             }
         },
         onError: () => {
+            isConnectingIntensityWs = false; // 释放连接锁
             intWssRetry();
         },
         reconnectCallback: initIntensityWss,
@@ -992,16 +1029,35 @@ function initFanStudioWss() {
         return;
     }
     
+    if (isConnectingFanStudioWs) {
+        console.log('⚠️ Fan Studio WebSocket正在连接中，跳过重复连接');
+        return;
+    }
+    
+    isConnectingFanStudioWs = true;
     closeFanStudioWss();
     
     fanStudioWebSocket = createWebSocket(CONFIG.INT_WSS_FANSTUDIO, {
         onOpen: (socket) => {
+            isConnectingFanStudioWs = false; // 释放连接锁
+            markDataSourceConnected('fanStudio'); // 标记Fan Studio数据源已连接
             console.log("✅ Fan Studio烈度速报WebSocket连接成功");
             fanStudioReconnectCount = 0;
             isFanStudioInited = true;
             
-            // 连接成功后重置烈度速报页面显示
-            resetIntensityPageToDefault();
+            // 连接成功后主动请求初始数据（与主WebSocket相同的模式）
+            console.log("🔄 Fan Studio烈度速报WebSocket重连成功，正在请求数据...");
+            
+            setTimeout(() => {
+                if (socket && socket.readyState === 1) {
+                    try {
+                        socket.send("query");
+                        console.log("已向Fan Studio发送烈度速报查询请求");
+                    } catch (err) {
+                        console.error("发送Fan Studio查询请求失败：", err);
+                    }
+                }
+            }, 50);
             
             fanStudioPingTimer = setInterval(() => {
                 if (socket && socket.readyState === 1) {
@@ -1032,7 +1088,12 @@ function initFanStudioWss() {
             }
         },
         onClose: (event) => {
+            isConnectingFanStudioWs = false; // 释放连接锁
             console.log(`Fan Studio烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
+            // 更新Fan Studio数据源状态（如果不是正常关闭）
+            if (event.code !== 1000) {
+                updateDataSourceStatus('fanStudio', event.code, fanStudioReconnectCount);
+            }
             clearInterval(fanStudioPingTimer);
             fanStudioWebSocket = null;
             if (event.code !== 1000) {
@@ -1040,6 +1101,7 @@ function initFanStudioWss() {
             }
         },
         onError: () => {
+            isConnectingFanStudioWs = false; // 释放连接锁
             fanStudioWssRetry();
         },
         reconnectCallback: initFanStudioWss,
@@ -1439,6 +1501,8 @@ function resetPagesToDefault() {
         renderHistoryData(3, false, "暂无海啸预警数据", "", PAGE_COLOR_MAP[3]);
     }
     if (CONFIG.PAGE_ENABLED[4]) {
+        // 重置气象预警标签背景色为默认颜色
+        dom.weatherTag.style.backgroundColor = PAGE_COLOR_MAP[4];
         renderHistoryData(4, false, "暂无气象预警数据", "", PAGE_COLOR_MAP[4]);
     }
 }
@@ -1450,6 +1514,19 @@ function resetIntensityPageToDefault() {
     if (CONFIG.PAGE_ENABLED[2]) {
         renderHistoryData(2, false, "暂无烈度速报数据");
     }
+}
+
+/**
+ * 重置所有页面的颜色为默认值
+ * 包括文本颜色和标签背景色（如气象预警的weatherTag）
+ */
+function resetAllPageColorsToDefault() {
+    // 重置气象预警标签背景色
+    if (dom.weatherTag) {
+        dom.weatherTag.style.backgroundColor = PAGE_COLOR_MAP[4];
+    }
+    
+    console.log('✅ 已重置所有页面颜色为默认值');
 }
 
 // 创建WebSocket连接的通用函数
@@ -1524,6 +1601,11 @@ function createWebSocket(url, options) {
                 }
             }
             
+            // 检测是否由于网络问题导致连接失败
+            if (event.code === 1006 && reconnectCount >= 2) {
+                checkAndShowNetworkError(url, reconnectCount);
+            }
+            
             // 重连逻辑
             if (reconnectCallback) {
                 // 计算重连延迟（指数退避）
@@ -1593,6 +1675,11 @@ function createWebSocket(url, options) {
             
             console.error(`❌ WebSocket错误: ${url} - ${errorMessage}`, error);
             
+            // 检测是否由于网络问题导致连接错误
+            if (reconnectCount >= 2) {
+                checkAndShowNetworkError(url, reconnectCount);
+            }
+            
             if (onError) {
                 try {
                     onError(error, ws);
@@ -1622,6 +1709,12 @@ function createWebSocket(url, options) {
 }
 
 function initWebSocket(){
+    if (isConnectingMainWs) {
+        console.log('⚠️ 主WebSocket正在连接中，跳过重复连接');
+        return;
+    }
+    
+    isConnectingMainWs = true;
     clearInterval(pingTimer);
     if(webSocket&&webSocket.readyState!==3){
         try{
@@ -1636,6 +1729,8 @@ function initWebSocket(){
     
     webSocket = createWebSocket(CONFIG.WS_ALL, {
         onOpen: (socket) => {
+            isConnectingMainWs = false; // 释放连接锁
+            markDataSourceConnected('main'); // 标记主数据源已连接
             reconnectCount = 0;
             parseMeasureData.source = "cenc";
             measureDataCache = {};
@@ -1710,13 +1805,23 @@ function initWebSocket(){
                 console.error("❌ 数据解析失败：", err, "原始数据：", e.data);
             }
         },
-        onClose: () => {
+        onClose: (event) => {
+            isConnectingMainWs = false; // 释放连接锁
+            // 更新主数据源状态（如果event存在且不是正常关闭）
+            if (event && event.code !== 1000) {
+                updateDataSourceStatus('main', event.code, reconnectCount);
+            }
             clearInterval(pingTimer);
             webSocket = null;
         },
         onFailed: () => {
+            isConnectingMainWs = false; // 释放连接锁
             console.log('❌ 主WebSocket连接失败，停止重连');
             if (!CONFIG.SHOW_NETWORK_STATUS) return;
+            
+            // 重置所有页面颜色为默认值
+            resetAllPageColorsToDefault();
+            
             if (CONFIG.PAGE_ENABLED[0]) {
                 renderHistoryData(0, false, "数据源连接失败");
             }
@@ -1729,6 +1834,10 @@ function initWebSocket(){
             if (CONFIG.PAGE_ENABLED[4]) {
                 renderHistoryData(4, false, "数据源连接失败", "", PAGE_COLOR_MAP[4]);
             }
+        },
+        onError: (error) => {
+            isConnectingMainWs = false; // 释放连接锁
+            console.error('❌ 主WebSocket连接错误', error);
         },
         reconnectCallback: initWebSocket,
         reconnectCount: reconnectCount++
@@ -1844,6 +1953,9 @@ function checkNetworkStatus() {
 function handleOnlineEvent() {
     console.log('✅ 网络已连接');
     
+    // 隐藏网络断开状态
+    hideNetworkDisconnectedStatus();
+    
     // 重置数据源失败状态（网络恢复后重新尝试）
     if (intensitySourceStopped) {
         console.log('✅ 网络恢复，重置数据源状态');
@@ -1897,8 +2009,21 @@ function handleOnlineEvent() {
 // 网络断开事件处理函数
 function handleOfflineEvent() {
     console.log('❌ 网络已断开');
+    showNetworkDisconnectedStatus();
+}
+
+/**
+ * 显示网络断开状态
+ * 在各页面显示网络断开提示，并标记状态已显示
+ */
+function showNetworkDisconnectedStatus() {
+    if (!CONFIG.SHOW_NETWORK_STATUS || networkStatusDisplayed) return;
     
-    if (!CONFIG.SHOW_NETWORK_STATUS) return;
+    console.log('❌ 显示网络断开状态提示');
+    networkStatusDisplayed = true;
+    
+    // 重置所有页面的颜色为默认值
+    resetAllPageColorsToDefault();
     
     // 在各页面显示网络断开提示
     if (CONFIG.PAGE_ENABLED[0]) {
@@ -1915,6 +2040,261 @@ function handleOfflineEvent() {
     }
     if (CONFIG.PAGE_ENABLED[4]) {
         renderHistoryData(4, false, "网络已断开，正在等待恢复...", "", PAGE_COLOR_MAP[4]);
+    }
+}
+
+/**
+ * 隐藏网络断开状态
+ * 重置页面显示，清除网络断开状态标记
+ */
+function hideNetworkDisconnectedStatus() {
+    if (!networkStatusDisplayed) return;
+    
+    console.log('✅ 隐藏网络断开状态提示');
+    networkStatusDisplayed = false;
+    
+    // 重置页面显示
+    resetPagesToDefault();
+    resetIntensityPageToDefault();
+}
+
+/**
+ * 检测WebSocket连接失败是否由于网络问题
+ * @param {string} url - WebSocket URL
+ * @param {number} reconnectCount - 当前重连次数
+ */
+function checkAndShowNetworkError(url, reconnectCount) {
+    // 如果重连次数超过2次，可能是网络问题
+    if (reconnectCount >= 2 && !networkStatusDisplayed && !checkNetworkStatus()) {
+        console.log(`⚠️ WebSocket连接多次失败(${reconnectCount}次)，检测到网络可能已断开: ${url}`);
+        showNetworkDisconnectedStatus();
+    }
+}
+
+/**
+ * 根据WebSocket关闭码判断错误类型
+ * @param {number} code - WebSocket关闭码
+ * @returns {string} - 错误类型
+ */
+function classifyErrorByCode(code) {
+    switch (code) {
+        case 1000:
+            return ERROR_TYPES.NORMAL_CLOSE;
+        case 1001:
+            return ERROR_TYPES.SERVER_UNAVAILABLE;
+        case 1002:
+            return ERROR_TYPES.PROTOCOL_ERROR;
+        case 1003:
+            return ERROR_TYPES.PROTOCOL_ERROR;
+        case 1006:
+            return ERROR_TYPES.NETWORK; // 异常关闭，通常是网络问题
+        case 1008:
+            return ERROR_TYPES.CONNECTION_REFUSED;
+        case 1011:
+            return ERROR_TYPES.SERVER_ERROR;
+        case 1012:
+            return ERROR_TYPES.SERVER_RESTART;
+        case 1013:
+            return ERROR_TYPES.SERVER_UNAVAILABLE;
+        case 1014:
+            return ERROR_TYPES.SERVER_ERROR;
+        case 1015:
+            return ERROR_TYPES.NETWORK; // TLS握手失败，通常是网络问题
+        default:
+            // 未知的关闭码也归类为网络问题（保守策略）
+            return ERROR_TYPES.NETWORK;
+    }
+}
+
+/**
+ * 获取错误类型的用户友好描述
+ * @param {string} errorType - 错误类型
+ * @param {string} dataSourceName - 数据源名称
+ * @returns {string} - 用户友好的错误消息
+ */
+function getErrorMessage(errorType, dataSourceName) {
+    switch (errorType) {
+        case ERROR_TYPES.NETWORK:
+            return `${dataSourceName}连接异常，可能网络已断开`;
+        case ERROR_TYPES.SERVER_ERROR:
+            return `${dataSourceName}服务器内部错误`;
+        case ERROR_TYPES.SERVER_RESTART:
+            return `${dataSourceName}服务正在重启`;
+        case ERROR_TYPES.SERVER_UNAVAILABLE:
+            return `${dataSourceName}服务暂时不可用`;
+        case ERROR_TYPES.PROTOCOL_ERROR:
+            return `${dataSourceName}协议错误`;
+        case ERROR_TYPES.CONNECTION_REFUSED:
+            return `${dataSourceName}连接被拒绝`;
+        case ERROR_TYPES.NORMAL_CLOSE:
+            return `${dataSourceName}连接已正常关闭`;
+        default:
+            return `${dataSourceName}连接失败`;
+    }
+}
+
+/**
+ * 更新数据源状态并显示相应的错误信息
+ * @param {string} source - 数据源标识 ('main', 'intensity', 'fanStudio')
+ * @param {number} closeCode - WebSocket关闭码
+ * @param {number} reconnectCount - 当前重连次数
+ */
+function updateDataSourceStatus(source, closeCode, reconnectCount) {
+    const errorType = classifyErrorByCode(closeCode);
+    
+    // 获取数据源显示名称
+    let dataSourceName = '';
+    switch (source) {
+        case 'main':
+            dataSourceName = '主数据源';
+            break;
+        case 'intensity':
+            dataSourceName = 'NowQuake烈度速报';
+            break;
+        case 'fanStudio':
+            dataSourceName = 'Fan Studio烈度速报';
+            break;
+        default:
+            dataSourceName = '数据源';
+    }
+    
+    const errorMessage = getErrorMessage(errorType, dataSourceName);
+    
+    // 更新状态
+    dataSourceStatus[source] = {
+        connected: false,
+        errorType: errorType,
+        errorMessage: errorMessage
+    };
+    
+    console.log(`📊 数据源状态更新 [${source}]: ${errorMessage}`);
+    
+    // 根据错误类型和重连次数决定是否显示错误信息
+    if (reconnectCount >= 1) {
+        showDataSourceError(source, errorType, errorMessage);
+    }
+    
+    // 检查是否所有数据源都因网络问题断开
+    checkAllDataSourcesNetworkIssue();
+}
+
+/**
+ * 标记数据源为已连接状态
+ * @param {string} source - 数据源标识
+ */
+function markDataSourceConnected(source) {
+    if (!dataSourceStatus[source]) return;
+    
+    dataSourceStatus[source] = {
+        connected: true,
+        errorType: null,
+        errorMessage: null
+    };
+    
+    console.log(`✅ 数据源已连接 [${source}]`);
+    
+    // 如果之前显示了该数据源的错误信息，现在可以清除
+    hideDataSourceError(source);
+    
+    // 如果所有数据源都已连接或恢复，隐藏全局网络断开提示
+    checkAndHideGlobalNetworkStatus();
+}
+
+/**
+ * 显示特定数据源的错误信息
+ * @param {string} source - 数据源标识
+ * @param {string} errorType - 错误类型
+ * @param {string} message - 错误消息
+ */
+function showDataSourceError(source, errorType, message) {
+    if (!CONFIG.SHOW_NETWORK_STATUS) return;
+    
+    console.log(`⚠️ 显示数据源错误 [${source}]: ${message}`);
+    
+    // 重置所有页面的颜色为默认值（确保断开连接后颜色恢复正常）
+    resetAllPageColorsToDefault();
+    
+    // 根据数据源在对应页面显示错误
+    switch (source) {
+        case 'main':
+            // 主数据源影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)
+            if (CONFIG.PAGE_ENABLED[0] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                renderHistoryData(0, false, message);
+            }
+            if (CONFIG.PAGE_ENABLED[1] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                renderHistoryData(1, false, message);
+            }
+            if (CONFIG.PAGE_ENABLED[3] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                renderHistoryData(3, false, message, "", PAGE_COLOR_MAP[3]);
+            }
+            if (CONFIG.PAGE_ENABLED[4] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                renderHistoryData(4, false, message, "", PAGE_COLOR_MAP[4]);
+            }
+            break;
+            
+        case 'intensity':
+        case 'fanStudio':
+            // 烈度速报数据源影响：烈度速报页面(2)
+            if (CONFIG.PAGE_ENABLED[2] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                renderHistoryData(2, false, message);
+            }
+            break;
+    }
+}
+
+/**
+ * 隐藏特定数据源的错误信息
+ * @param {string} source - 数据源标识
+ */
+function hideDataSourceError(source) {
+    // 当数据源重新连接成功时，对应的页面会在onOpen回调中通过resetPagesToDefault()等函数重置
+    // 这里主要用于清理额外的状态标记
+    console.log(`✅ 清除数据源错误显示 [${source}]`);
+}
+
+/**
+ * 检查所有数据源是否都因网络问题断开
+ * 如果是，则显示全局网络断开提示
+ */
+function checkAllDataSourcesNetworkIssue() {
+    const sources = Object.keys(dataSourceStatus);
+    const allNetworkIssue = sources.every(source => {
+        const status = dataSourceStatus[source];
+        // 如果数据源未连接且错误类型是网络问题，则计入
+        return status.connected === true || status.errorType === ERROR_TYPES.NETWORK || status.errorType === null;
+    });
+    
+    // 如果有至少一个数据源因非网络原因断开，不显示全局网络断开
+    const hasNonNetworkError = sources.some(source => {
+        const status = dataSourceStatus[source];
+        return status.connected === false && 
+               status.errorType !== null && 
+               status.errorType !== ERROR_TYPES.NETWORK &&
+               status.errorType !== ERROR_TYPES.NORMAL_CLOSE;
+    });
+    
+    // 只有当所有活跃的数据源都因网络问题断开时，才显示全局网络断开提示
+    if (allNetworkIssue && !hasNonNetworkError && !networkStatusDisplayed) {
+        const disconnectedSources = sources.filter(s => 
+            dataSourceStatus[s].connected === false && 
+            dataSourceStatus[s].errorType === ERROR_TYPES.NETWORK
+        );
+        
+        if (disconnectedSources.length > 0) {
+            console.log(`⚠️ 多个数据源因网络问题断开: ${disconnectedSources.join(', ')}`);
+            // 不立即显示全局网络断开，让各个数据源显示自己的错误信息
+        }
+    }
+}
+
+/**
+ * 检查并隐藏全局网络状态（如果所有数据源都已恢复）
+ */
+function checkAndHideGlobalNetworkStatus() {
+    const allConnected = Object.values(dataSourceStatus).every(status => status.connected === true);
+    
+    if (allConnected && networkStatusDisplayed) {
+        hideNetworkDisconnectedStatus();
     }
 }
 
