@@ -899,6 +899,12 @@ function initIntensityWss() {
         return;
     }
     
+    // 检查是否已有活跃的WebSocket连接
+    if (intensityWebSocket && intensityWebSocket.readyState === 1) {
+        console.log('✅ NowQuake烈度速报WebSocket已是活跃状态，跳过重新初始化');
+        return;
+    }
+    
     isConnectingIntensityWs = true;
     closeIntWss();
     
@@ -938,22 +944,24 @@ function initIntensityWss() {
         onClose: (event) => {
             isConnectingIntensityWs = false; // 释放连接锁
             console.log(`烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
+            
             // 更新NowQuake数据源状态（如果不是正常关闭）
             if (event.code !== 1000) {
                 updateDataSourceStatus('intensity', event.code, intensityReconnectCount);
             }
+            
             clearInterval(intensityPingTimer);
             intensityWebSocket = null;
-            if (event.code !== 1000) {
-                intWssRetry();
-            }
+            // 注意：不再在这里调用 intWssRetry()
+            // 重连逻辑统一由 createWebSocket 的 reconnectCallback 处理
         },
         onError: () => {
             isConnectingIntensityWs = false; // 释放连接锁
-            intWssRetry();
+            // 注意：不再在这里调用 intWssRetry()
+            // 错误会触发 ws.close()，进而触发 onClose → createWebSocket 的 reconnectCallback
         },
         reconnectCallback: initIntensityWss,
-        reconnectCount: intensityReconnectCount++
+        reconnectCount: intensityReconnectCount  // 使用当前值，不在此处递增
     });
 }
 
@@ -1034,6 +1042,12 @@ function initFanStudioWss() {
         return;
     }
     
+    // 检查是否已有活跃的WebSocket连接
+    if (fanStudioWebSocket && fanStudioWebSocket.readyState === 1) {
+        console.log('✅ Fan Studio烈度速报WebSocket已是活跃状态，跳过重新初始化');
+        return;
+    }
+    
     isConnectingFanStudioWs = true;
     closeFanStudioWss();
     
@@ -1090,22 +1104,24 @@ function initFanStudioWss() {
         onClose: (event) => {
             isConnectingFanStudioWs = false; // 释放连接锁
             console.log(`Fan Studio烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
+            
             // 更新Fan Studio数据源状态（如果不是正常关闭）
             if (event.code !== 1000) {
                 updateDataSourceStatus('fanStudio', event.code, fanStudioReconnectCount);
             }
+            
             clearInterval(fanStudioPingTimer);
             fanStudioWebSocket = null;
-            if (event.code !== 1000) {
-                fanStudioWssRetry();
-            }
+            // 注意：不再在这里调用 fanStudioWssRetry()
+            // 重连逻辑统一由 createWebSocket 的 reconnectCallback 处理
         },
         onError: () => {
             isConnectingFanStudioWs = false; // 释放连接锁
-            fanStudioWssRetry();
+            // 注意：不再在这里调用 fanStudioWssRetry()
+            // 错误会触发 ws.close()，进而触发 onClose → createWebSocket 的 reconnectCallback
         },
         reconnectCallback: initFanStudioWss,
-        reconnectCount: fanStudioReconnectCount++
+        reconnectCount: fanStudioReconnectCount  // 使用当前值，不在此处递增
     });
 }
 
@@ -1711,6 +1727,12 @@ function createWebSocket(url, options) {
 function initWebSocket(){
     if (isConnectingMainWs) {
         console.log('⚠️ 主WebSocket正在连接中，跳过重复连接');
+        return;
+    }
+    
+    // 检查是否已有活跃的WebSocket连接
+    if (webSocket && webSocket.readyState === 1) {
+        console.log('✅ 主WebSocket已是活跃状态，跳过重新初始化');
         return;
     }
     

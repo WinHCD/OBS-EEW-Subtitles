@@ -12,10 +12,10 @@
 |--------|------|--------|------|
 | `WS_ALL` | 所有预警数据的 WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | 包含地震预警、台网测定、海啸预警、气象预警等数据 |
 | `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | `"auto"`: 优先NowQuake，失败自动切换Fan Studio；`"nowquake"`: 仅NowQuake；`"fanstudio"`: 仅Fan Studio |
-| `INT_HTTP_LASTID` | NowQuake烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 用于获取最新的地震事件 ID |
-| `INT_HTTP_EVENT` | NowQuake烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 用于获取特定地震事件的详细信息 |
+| `INT_HTTP_LASTID` | NowQuake烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 仅 NowQuake 使用 |
+| `INT_HTTP_EVENT` | NowQuake烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 仅 NowQuake 使用 |
 | `INT_WSS_REAL` | NowQuake烈度速报 WebSocket 接口 - 实时数据 | `wss://api-cencint-public.nowquake.cn/websocket` | 用于获取烈度速报的实时数据 |
-| `INT_WSS_FANSTUDIO` | Fan Studio烈度速报 WebSocket 接口 | `wss://ws.fanstudio.tech/cenc-ir` | Fan Studio烈度速报数据源 |
+| `INT_WSS_FANSTUDIO` | Fan Studio烈度速报 WebSocket 接口 | `wss://ws.fanstudio.tech/cenc-ir` | Fan Studio 烈度速报数据源 |
 
 ### 2. 显示参数配置
 
@@ -62,7 +62,7 @@
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
-| `APP_INFO` | 应用信息文本 | `"所有预警信息仅供参考，仅限交流学习使用，请以当地官方发布信息为准。地震不可准确预测，不要盼震盼灾，请理性讨论。 "` | 显示在应用信息页面的文本内容 |
+| `APP_INFO` | 应用信息文本 | `"所有预警信息仅供参考..."` | 显示在应用信息页面的文本内容 |
 
 ### 7. 页面颜色配置
 
@@ -77,25 +77,15 @@
 | 4 | 气象预警 | #9370DB (中紫色) |
 | 5 | 应用信息 | #fff (白色) |
 
-#### 样式文件中的默认颜色
-
-在 `styles.css` 文件中，也定义了默认颜色作为 CSS 变量的 fallback 值：
-
-| 页面名称 | 标签背景颜色 | 文本颜色 |
-|----------|--------------|----------|
-| 地震预警 | `#ff3838` (红色) | `#ff3838` (红色) |
-| 台网测定 | `#3399ff` (蓝色) | `#3399ff` (蓝色) |
-| 烈度速报 | `#00e0e0` (青色) | `#00e0e0` (青色) |
-| 海啸预警 | `#32CD32` (亮绿色) | `#32CD32` (亮绿色) |
-| 气象预警 | `#9370DB` (中紫色) | `#9370DB` (中紫色) |
-
-这些颜色值是作为 CSS 变量的 fallback 值存在的，当 CSS 变量未设置时会使用这些默认值。在实际运行时，JavaScript 会从 `config.js` 的 `PAGE_COLOR_MAP` 中读取颜色值，并设置为 CSS 变量，从而覆盖这些默认值。
+> **注意**：气象预警页面的标签背景色会根据预警级别动态变化（红/橙/黄/蓝），断开连接或数据源故障时会自动恢复为默认紫色。
 
 ### 8. 常量定义
 
 | 常量 | 说明 | 值 | 备注 |
 |------|------|-----|------|
 | `ONE_DAY` | 一天的毫秒数 | `24 * 60 * 60 * 1000` | 用于时间计算 |
+
+---
 
 ## 修改配置的步骤
 
