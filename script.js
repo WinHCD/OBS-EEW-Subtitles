@@ -1,10 +1,10 @@
 
 
 let webSocket=null,pingTimer=null,reconnectCount=0;
-let currentPage=0,totalPage=6;
+let currentPage=0,totalPage=7;
 let timer=null,forcedTimer=null;
 let isForcedShow=false,isScrolling=false,isInited=false;
-let lastAlert="",lastMeasure="",lastIntensity="",lastTsunami="",lastWeather="";
+let lastAlert="",lastMeasure="",lastIntensity="",lastTsunami="",lastWeather="",lastTyphoon="";
 let curScrollingLines=[];
 let measureDataCache={};
 let alertStore = { lastEventId: "", lastSource: "", lastTime: 0, lastProvince: "", lastUpdates: 0 };
@@ -20,8 +20,10 @@ let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
 let intensityExpiryCheckTimer=null; // 烈度速报过期检查定时器
 let tsunamiExpiryCheckTimer=null; // 海啸预警过期检查定时器
+let typhoonExpiryCheckTimer=null; // 台风实况过期检查定时器
 let currentIntensityData=null; // 当前显示的烈度速报数据
 let currentTsunamiData=null; // 当前显示的海啸预警数据
+let currentTyphoonData=null; // 当前显示的台风实况数据
 let domCache={}; // DOM节点缓存
 let isConnectingMainWs=false; // 主WebSocket连接锁
 let isConnectingIntensityWs=false; // 烈度速报WebSocket连接锁
@@ -54,13 +56,15 @@ const dom={
         document.getElementById("intensityContentWrap"),
         document.getElementById("tsunamiContentWrap"),
         document.getElementById("weatherContentWrap"),
+        document.getElementById("typhoonContentWrap"),
         document.getElementById("appInfoContentWrap")
     ],
     alertTag:document.getElementById("alertTag"),
     measureTag:document.getElementById("measureTag"),
     intensityTag:document.getElementById("intensityTag"),
     tsunamiTag:document.getElementById("tsunamiTag"),
-    weatherTag:document.getElementById("weatherTag")
+    weatherTag:document.getElementById("weatherTag"),
+    typhoonTag:document.getElementById("typhoonTag")
 };
 
 /**
@@ -74,8 +78,8 @@ const dom={
     dom.wrap.style.webkitTransform = `translate3d(0, 0, 0)`;
     
     // 更新应用信息
-    if (dom.contentWraps[5]) {
-        dom.contentWraps[5].innerHTML = `
+    if (dom.contentWraps[6]) {
+        dom.contentWraps[6].innerHTML = `
             <div class="line-item"><div class="line-text">${CONFIG.APP_INFO}</div></div>
         `;
     }
@@ -114,6 +118,7 @@ const dom={
     startMemoryCleanup();   // 启动内存清理定时器
     startIntensityExpiryCheck(); // 启动烈度速报过期检查定时器
     startTsunamiExpiryCheck(); // 启动海啸预警过期检查定时器
+    startTyphoonExpiryCheck(); // 启动台风实况过期检查定时器
     startNetworkMonitor();  // 启动网络状态监听器
     startPageLogic();       // 启动页面逻辑
     
@@ -348,6 +353,9 @@ function addTagBlink(page) {
         case 3:
             dom.tsunamiTag.classList.add("tag-blink");
             break;
+        case 5:
+            dom.typhoonTag.classList.add("tag-blink");
+            break;
     }
 }
 
@@ -361,6 +369,7 @@ function removeAllTagBlink() {
     dom.intensityTag.classList.remove("tag-blink");
     dom.tsunamiTag.classList.remove("tag-blink");
     dom.weatherTag.classList.remove("tag-blink");
+    dom.typhoonTag.classList.remove("tag-blink");
 }
 
 /**
@@ -1236,6 +1245,7 @@ function setCSSVariables() {
     root.style.setProperty('--color-intensity', PAGE_COLOR_MAP[2]);
     root.style.setProperty('--color-tsunami', PAGE_COLOR_MAP[3]);
     root.style.setProperty('--color-weather', PAGE_COLOR_MAP[4]);
+    root.style.setProperty('--color-typhoon', PAGE_COLOR_MAP[5]);
 }
 
 // 初始化时设置CSS变量
@@ -1481,18 +1491,30 @@ function parseWeatherData(data, source, isInitial = false) {
         lastWeather = "";
         return;
     }
-    
+
     console.log(`✅ 收到气象预警数据：${data.headline}`);
 
     const uniqueId = `${data.id}_${data.headline}_${data.description}_${data.effective || ""}_${data.updateTime || Date.now()}`;
     if (uniqueId === lastWeather) return;
     lastWeather = uniqueId;
-    const level = data.headline.includes("红色") ? "红色" : data.headline.includes("橙色") ? "橙色" : data.headline.includes("黄色") ? "黄色" : data.headline.includes("蓝色") ? "蓝色" : "默认";
+    
+    // 颜色判断：优先匹配中文颜色，其次匹配罗马数字等级（I级=红色, II级=橙色, III级=黄色, IV级=蓝色）
+    let level = "默认";
+    if (data.headline.includes("红色") || data.headline.includes("I级")) {
+        level = "红色";
+    } else if (data.headline.includes("橙色") || data.headline.includes("II级")) {
+        level = "橙色";
+    } else if (data.headline.includes("黄色") || data.headline.includes("III级")) {
+        level = "黄色";
+    } else if (data.headline.includes("蓝色") || data.headline.includes("IV级")) {
+        level = "蓝色";
+    }
+    
     const targetColor = colorMap[level];
     dom.weatherTag.style.backgroundColor = targetColor;
     const line1 = `${data.headline}（生效时间：${data.effective || "未知时间"}）`;
     const line2 = data.description || "请做好相关防范措施";
-    
+
     // 根据是否是初始化数据决定使用哪个渲染函数
     if (isInitial) {
         renderHistoryData(4, true, line1, line2, targetColor);
@@ -1500,6 +1522,119 @@ function parseWeatherData(data, source, isInitial = false) {
         CONFIG.WEATHER_FORCED ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
     }
     if (currentPage === 4) startPageLogic();
+}
+
+/**
+ * 解析台风实况数据
+ * @param {Object} data - 台风实况数据对象
+ */
+function parseTyphoonData(data, source, isInitial = false) {
+    // data 参数可能是数组（直接传入Data数组）或对象（包含Data字段）
+    let typhoonData = null;
+    let md5Value = "";
+
+    if (Array.isArray(data)) {
+        // 直接传入的是Data数组
+        typhoonData = data;
+    } else if (data && data.Data && Array.isArray(data.Data)) {
+        // 传入的是包含Data字段的对象
+        typhoonData = data.Data;
+        md5Value = data.md5 || "";
+    }
+
+    if (!typhoonData || typhoonData.length === 0) {
+        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+        currentTyphoonData = null;
+        lastTyphoon = "";
+        return;
+    }
+
+    console.log(`✅ 收到台风实况数据：共${typhoonData.length}个台风`);
+
+    // 使用 md5 作为唯一标识（台风数据可能有多个，用md5判断整体数据是否更新）
+    const uniqueId = md5Value || `typhoon_${Date.now()}`;
+    if (uniqueId === lastTyphoon) return;
+    lastTyphoon = uniqueId;
+
+    // 台风强度等级颜色映射（根据type字段）
+    const typeColorMap = {
+        "热带低压": "#87CEEB",
+        "热带风暴": "#1E90FF",
+        "强热带风暴": "#FF7F50",
+        "台风": "#FF8C00",
+        "强台风": "#FF4500",
+        "超强台风": "#FF0000",
+        "默认": PAGE_COLOR_MAP[5]
+    };
+
+    // 构建台风信息文本
+    let line1 = `中国气象局台风实况（更新时间：${typhoonData[0]?.updateTime || "未知时间"}）`;
+    let line2 = "";
+
+    // 处理多台风情况
+    typhoonData.forEach((typhoon, index) => {
+        if (!typhoon.id || !typhoon.name) return;
+
+        // 台风基本信息
+        const typhoonName = `${typhoon.name}（${typhoon.name_en || typhoon.name}）`;
+        const typhoonId = typhoon.id;
+        const position = `中心位于<span class="highlight-num">${typhoon.latitude || "?"}°N</span>、<span class="highlight-num">${typhoon.longitude || "?"}°E</span>`;
+        const type = typhoon.type || "未知等级";
+        const power = typhoon.power || "?";
+        const pressure = typhoon.pressure || "?";
+        const windSpeed = typhoon.windSpeed || "?";
+        const moveDirection = typhoon.moveDirection || "未知方向";
+        const moveSpeed = typhoon.moveSpeed || "?";
+
+        // 风圈半径信息
+        let radiusInfo = "";
+        if (typhoon.radius7 !== null && typhoon.radius7 !== undefined) {
+            radiusInfo += `七级风圈半径<span class="highlight-num">${typhoon.radius7}</span>公里`;
+        }
+        if (typhoon.radius10 !== null && typhoon.radius10 !== undefined) {
+            if (radiusInfo) radiusInfo += "，";
+            radiusInfo += `十级风圈半径<span class="highlight-num">${typhoon.radius10}</span>公里`;
+        }
+
+        // 构建台风详细信息
+        let typhoonInfo = `${typhoonId}号台风${typhoonName}，${position}，中心附近最大风力<span class="highlight-num">${power}</span>级（风速<span class="highlight-num">${windSpeed}</span>米/秒），中心最低气压<span class="highlight-num">${pressure}</span>百帕，当前强度等级<span class="highlight-num">${type}</span>，移动方向${moveDirection}，移动速度<span class="highlight-num">${moveSpeed}</span>公里/小时`;
+        if (radiusInfo) {
+            typhoonInfo += `，${radiusInfo}`;
+        }
+
+        // 多台风用分号分隔
+        if (line2) {
+            line2 += "；";
+        }
+        line2 += typhoonInfo;
+    });
+
+    // 如果没有有效的台风数据，显示默认信息
+    if (!line2) {
+        line2 = "当前西太平洋及南海海域无活跃台风。";
+    } else {
+        // 在最后添加句号
+        line2 += "。";
+    }
+
+    // 保存当前显示的台风数据
+    currentTyphoonData = { Data: typhoonData, md5: md5Value };
+
+    console.log(`📊 台风实况数据显示：`);
+    console.log(`   第一行：${line1}`);
+    console.log(`   第二行：${line2}`);
+
+    // 根据是否是初始化数据决定使用哪个渲染函数
+    // 台风数据使用默认颜色（橙色），不根据强度等级动态改变颜色
+    const targetColor = PAGE_COLOR_MAP[5];
+
+    if (isInitial) {
+        console.log(`🔄 初始化数据，使用renderHistoryData`);
+        renderHistoryData(5, true, line1, line2, targetColor);
+    } else {
+        console.log(`⚡ 实时数据，使用renderRealTimeData`);
+        renderRealTimeData(5, true, line1, line2, targetColor);
+    }
 }
 
 /**
@@ -1520,6 +1655,9 @@ function resetPagesToDefault() {
         // 重置气象预警标签背景色为默认颜色
         dom.weatherTag.style.backgroundColor = PAGE_COLOR_MAP[4];
         renderHistoryData(4, false, "暂无气象预警数据", "", PAGE_COLOR_MAP[4]);
+    }
+    if (CONFIG.PAGE_ENABLED[5]) {
+        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
     }
 }
 
@@ -1790,7 +1928,7 @@ function initWebSocket(){
             try {
                 const res = JSON.parse(e.data);
                 if (res.type === "initial_all") {
-                    const initParseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
+                    const initParseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, typhoon: parseTyphoonData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
                     for (const [source, handler] of Object.entries(initParseMap)) {
                         if (res[source] && res[source].Data) {
                             try {
@@ -1814,7 +1952,7 @@ function initWebSocket(){
                     return;
                 }
                 if (res.type === "update" && res.source && res.Data) {
-                    const parseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
+                    const parseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, typhoon: parseTyphoonData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
                     if (["cenc", "ningxia", "guangxi", "shanxi", "beijing", "shandong", "yunnan"].includes(res.source)) parseMeasureData.source = res.source;
                     try {
                         // 处理更新数据，会强制显示
@@ -1840,10 +1978,10 @@ function initWebSocket(){
             isConnectingMainWs = false; // 释放连接锁
             console.log('❌ 主WebSocket连接失败，停止重连');
             if (!CONFIG.SHOW_NETWORK_STATUS) return;
-            
+
             // 重置所有页面颜色为默认值
             resetAllPageColorsToDefault();
-            
+
             if (CONFIG.PAGE_ENABLED[0]) {
                 renderHistoryData(0, false, "数据源连接失败");
             }
@@ -1855,6 +1993,9 @@ function initWebSocket(){
             }
             if (CONFIG.PAGE_ENABLED[4]) {
                 renderHistoryData(4, false, "数据源连接失败", "", PAGE_COLOR_MAP[4]);
+            }
+            if (CONFIG.PAGE_ENABLED[5]) {
+                renderHistoryData(5, false, "数据源连接失败", "", PAGE_COLOR_MAP[5]);
             }
         },
         onError: (error) => {
@@ -1953,6 +2094,31 @@ function startTsunamiExpiryCheck() {
     console.log("✅ 海啸预警过期检查定时器已启动");
 }
 
+// 检查台风实况数据是否过期的函数
+function checkTyphoonExpiry() {
+    // 台风数据不会过期，但如果超过24小时没有更新，可能已经消散
+    if (currentTyphoonData && currentTyphoonData.Data && currentTyphoonData.Data.length > 0) {
+        const updateTime = currentTyphoonData.Data[0]?.updateTime;
+        if (updateTime) {
+            const updateDate = new Date(updateTime);
+            if (!isNaN(updateDate.getTime()) && Date.now() - updateDate.getTime() > ONE_DAY) {
+                console.log("⚠️  台风实况数据超过24小时未更新，可能已消散，清理显示");
+                renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+                currentTyphoonData = null;
+                lastTyphoon = "";
+            }
+        }
+    }
+}
+
+// 启动台风实况过期检查定时器
+function startTyphoonExpiryCheck() {
+    if (typhoonExpiryCheckTimer) clearInterval(typhoonExpiryCheckTimer);
+    // 每10分钟检查一次是否过期
+    typhoonExpiryCheckTimer = setInterval(checkTyphoonExpiry, 10 * 60 * 1000);
+    console.log("✅ 台风实况过期检查定时器已启动");
+}
+
 function startMemoryCleanup() {
     if (memoryCleanupTimer) clearInterval(memoryCleanupTimer);
     // 每5分钟清理一次内存
@@ -2040,13 +2206,13 @@ function handleOfflineEvent() {
  */
 function showNetworkDisconnectedStatus() {
     if (!CONFIG.SHOW_NETWORK_STATUS || networkStatusDisplayed) return;
-    
+
     console.log('❌ 显示网络断开状态提示');
     networkStatusDisplayed = true;
-    
+
     // 重置所有页面的颜色为默认值
     resetAllPageColorsToDefault();
-    
+
     // 在各页面显示网络断开提示
     if (CONFIG.PAGE_ENABLED[0]) {
         renderHistoryData(0, false, "网络已断开，正在等待恢复...");
@@ -2062,6 +2228,9 @@ function showNetworkDisconnectedStatus() {
     }
     if (CONFIG.PAGE_ENABLED[4]) {
         renderHistoryData(4, false, "网络已断开，正在等待恢复...", "", PAGE_COLOR_MAP[4]);
+    }
+    if (CONFIG.PAGE_ENABLED[5]) {
+        renderHistoryData(5, false, "网络已断开，正在等待恢复...", "", PAGE_COLOR_MAP[5]);
     }
 }
 
@@ -2239,7 +2408,7 @@ function showDataSourceError(source, errorType, message) {
     // 根据数据源在对应页面显示错误
     switch (source) {
         case 'main':
-            // 主数据源影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)
+            // 主数据源影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)、台风实况(5)
             if (CONFIG.PAGE_ENABLED[0] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
                 renderHistoryData(0, false, message);
             }
@@ -2251,6 +2420,9 @@ function showDataSourceError(source, errorType, message) {
             }
             if (CONFIG.PAGE_ENABLED[4] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
                 renderHistoryData(4, false, message, "", PAGE_COLOR_MAP[4]);
+            }
+            if (CONFIG.PAGE_ENABLED[5] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                renderHistoryData(5, false, message, "", PAGE_COLOR_MAP[5]);
             }
             break;
             
@@ -2336,6 +2508,7 @@ window.onbeforeunload=()=>{
     if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
     if(intensityExpiryCheckTimer)clearInterval(intensityExpiryCheckTimer);
     if(tsunamiExpiryCheckTimer)clearInterval(tsunamiExpiryCheckTimer);
+    if(typhoonExpiryCheckTimer)clearInterval(typhoonExpiryCheckTimer);
     if(webSocket&&webSocket.readyState!==3)webSocket.close(1000,"页面关闭");
     measureDataCache={};
     alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
@@ -2349,20 +2522,20 @@ window.onbeforeunload=()=>{
     nowQuakeFailed=false;
     fanStudioFailed=false;
     intensitySourceStopped=false;
-    
+
     // 清理网络状态监听器
     window.removeEventListener('online', handleOnlineEvent);
     window.removeEventListener('offline', handleOfflineEvent);
-    
+
     // 清理所有动画
     Object.values(animationIds).forEach(id=>{
         if(id)cancelAnimationFrame(id);
     });
     animationIds={};
-    
+
     // 清理DOM缓存
     domCache={};
-    
+
     // 清理DOM引用
     Object.keys(dom).forEach(key=>{
         if(typeof dom[key]==='object' && dom[key]!==null){

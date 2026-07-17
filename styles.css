@@ -77,6 +77,9 @@ html,body{
 .tag-weather{
     background:var(--color-weather, #9370DB)
 }
+.tag-typhoon{
+    background:var(--color-typhoon, #FF8C00)
+}
 .content-wrap{
     flex:1;
     -webkit-flex:1;
@@ -188,6 +191,9 @@ html,body{
 }
 .weather-item{
     color:var(--color-weather, #9370DB)
+}
+.typhoon-item{
+    color:var(--color-typhoon, #FF8C00)
 }
 .app-info-item .line-text{
     font-size:clamp(16px,2vw,28px);

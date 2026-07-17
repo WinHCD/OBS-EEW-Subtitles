@@ -10,7 +10,7 @@
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
-| `WS_ALL` | 所有预警数据的 WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | 包含地震预警、台网测定、海啸预警、气象预警等数据 |
+| `WS_ALL` | 所有预警数据的 WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | 包含地震预警、台网测定、海啸预警、气象预警、台风实况等数据 |
 | `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | `"auto"`: 优先NowQuake，失败自动切换Fan Studio；`"nowquake"`: 仅NowQuake；`"fanstudio"`: 仅Fan Studio |
 | `INT_HTTP_LASTID` | NowQuake烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 仅 NowQuake 使用 |
 | `INT_HTTP_EVENT` | NowQuake烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 仅 NowQuake 使用 |
@@ -56,7 +56,8 @@
 | `PAGE_ENABLED[2]` | 烈度速报页面启用状态 | `true` | 设置为 `false` 时，烈度速报页面将被禁用 |
 | `PAGE_ENABLED[3]` | 海啸预警页面启用状态 | `true` | 设置为 `false` 时，海啸预警页面将被禁用 |
 | `PAGE_ENABLED[4]` | 气象预警页面启用状态 | `true` | 设置为 `false` 时，气象预警页面将被禁用 |
-| `PAGE_ENABLED[5]` | 应用信息页面启用状态 | `true` | 设置为 `false` 时，应用信息页面将被禁用 |
+| `PAGE_ENABLED[5]` | 台风实况页面启用状态 | `true` | 设置为 `false` 时，台风实况页面将被禁用 |
+| `PAGE_ENABLED[6]` | 应用信息页面启用状态 | `true` | 设置为 `false` 时，应用信息页面将被禁用 |
 
 ### 6. 应用信息配置
 
@@ -75,9 +76,12 @@
 | 2 | 烈度速报 | #00e0e0 (青色) |
 | 3 | 海啸预警 | #32CD32 (亮绿色) |
 | 4 | 气象预警 | #9370DB (中紫色) |
-| 5 | 应用信息 | #fff (白色) |
+| 5 | 台风实况 | #FF8C00 (橙色) |
+| 6 | 应用信息 | #fff (白色) |
 
-> **注意**：气象预警页面的标签背景色会根据预警级别动态变化（红/橙/黄/蓝），断开连接或数据源故障时会自动恢复为默认紫色。
+> **注意**：
+> - 气象预警页面的标签背景色会根据预警级别动态变化（红/橙/黄/蓝），断开连接或数据源故障时会自动恢复为默认紫色。
+> - 海啸预警页面的标签背景色会根据预警级别动态变化（红/橙/黄/蓝），断开连接或数据源故障时会自动恢复为默认亮绿色。
 
 ### 8. 常量定义
 
@@ -150,7 +154,8 @@ const CONFIG={
         2:true, // 烈度速报
         3:true, // 海啸预警
         4:true, // 气象预警
-        5:true  // 应用信息
+        5:true, // 台风实况
+        6:true  // 应用信息
     },
     INTENSITY_CONFIG:{
         MAX_STATION_DISTANCE:50,
@@ -158,7 +163,7 @@ const CONFIG={
     },
     APP_INFO:"所有预警信息仅供参考，仅限交流学习使用，请以当地官方发布信息为准。地震不可准确预测，不要盼震盼灾，请理性讨论。 "
 };
-const PAGE_COLOR_MAP={0:"#ff3838",1:"#3399ff",2:"#00e0e0",3:"#32CD32",4:"#9370DB",5:"#fff"};
+const PAGE_COLOR_MAP={0:"#ff3838",1:"#3399ff",2:"#00e0e0",3:"#32CD32",4:"#9370DB",5:"#FF8C00",6:"#fff"};
 const ONE_DAY = 24 * 60 * 60 * 1000;
 ```
 
