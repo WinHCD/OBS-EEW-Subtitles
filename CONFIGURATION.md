@@ -13,7 +13,7 @@
 | `DATA_SOURCE` | 主数据源选择 | `"wolfx"` | `"fanstudio"`: 使用Fan Studio数据源；`"wolfx"`: 使用Wolfx数据源 |
 | `WS_ALL` | Fan Studio WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | Fan Studio 数据源地址 |
 | `WOLFX_WS_ALL` | Wolfx WebSocket 连接地址 | `wss://ws-api.wolfx.jp/all_eew` | Wolfx 数据源地址 |
-| `TYPHOON_API` | 台风预警API地址 | `https://api.fanstudio.tech/we/typhoon.php` | 台风数据获取地址 |
+| `TYPHOON_API` | 台风预警API地址 | `https://api.fanstudio.tech/we/typhoon.php` | 台风数据获取地址（仅在使用Wolfx 数据源时启用） |
 
 ### 2. 烈度速报配置
 
