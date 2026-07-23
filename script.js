@@ -16,6 +16,9 @@ let isFanStudioInited=false;
 let nowQuakeFailed=false; // NowQuake连接失败标记（用于自动切换到Fan Studio）
 let fanStudioFailed=false; // Fan Studio连接失败标记
 let intensitySourceStopped=false; // 烈度速报数据源停止连接标记
+let wolfxWebSocket=null,wolfxPingTimer=null,wolfxReconnectCount=0;
+let isWolfxInited=false;
+let typhoonUpdateTimer=null; // 台风数据定时更新定时器
 let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
 let intensityExpiryCheckTimer=null; // 烈度速报过期检查定时器
@@ -28,13 +31,15 @@ let domCache={}; // DOM节点缓存
 let isConnectingMainWs=false; // 主WebSocket连接锁
 let isConnectingIntensityWs=false; // 烈度速报WebSocket连接锁
 let isConnectingFanStudioWs=false; // Fan Studio WebSocket连接锁
+let isConnectingWolfxWs=false; // Wolfx WebSocket连接锁
 let networkStatusDisplayed=false; // 网络状态是否已显示标记
 
 // 数据源连接状态追踪
 let dataSourceStatus = {
     main: { connected: false, errorType: null, errorMessage: null }, // 主数据源（地震预警等）
     intensity: { connected: false, errorType: null, errorMessage: null }, // 烈度速报NowQuake
-    fanStudio: { connected: false, errorType: null, errorMessage: null }  // 烈度速报Fan Studio
+    fanStudio: { connected: false, errorType: null, errorMessage: null },  // 烈度速报Fan Studio
+    wolfx: { connected: false, errorType: null, errorMessage: null } // Wolfx数据源
 };
 
 // 错误类型枚举
@@ -87,13 +92,24 @@ const dom={
     // 检查初始网络状态
     if (checkNetworkStatus()) {
         console.log("✅ 网络连接正常，正在初始化WebSocket...");
-        initWebSocket();      // 初始化主WebSocket连接
-        
+
+        // 根据数据源配置初始化不同的WebSocket连接
+        const dataSource = CONFIG.DATA_SOURCE || "fanstudio";
+        if (dataSource === "wolfx") {
+            // 使用Wolfx数据源
+            console.log("✅ 使用Wolfx数据源");
+            initWolfxWss();  // 初始化Wolfx WebSocket连接
+        } else {
+            // 使用Fan Studio数据源（默认）
+            console.log("✅ 使用Fan Studio数据源");
+            initWebSocket();      // 初始化主WebSocket连接
+        }
+
         // 重置烈度速报数据源状态
         nowQuakeFailed = false;
         fanStudioFailed = false;
         intensitySourceStopped = false;
-        
+
         // 根据配置选择烈度速报数据源
         // "auto": 优先NowQuake，失败自动切换Fan Studio，都失败则停止
         // "nowquake": 仅使用NowQuake
@@ -766,6 +782,325 @@ function renderMeasureLatest(latestItem, isInitial = false) {
 }
 
 /**
+ * 解析Wolfx数据
+ * 负责处理来自Wolfx的多种数据源类型（仅国内数据）
+ * @param {Object} data - Wolfx数据对象
+ * @param {string} type - 数据类型（sc_eew, fj_eew, cenc_eew等）
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxData(data, type, isInitial = false) {
+    if (!data || !type) return;
+
+    // 根据数据类型分发处理（仅国内数据源）
+    switch (type) {
+        case 'sc_eew':
+            parseWolfxScEew(data, isInitial);
+            break;
+        case 'fj_eew':
+            parseWolfxFjEew(data, isInitial);
+            break;
+        case 'cq_eew':
+            parseWolfxCqEew(data, isInitial);
+            break;
+        case 'cenc_eew':
+            parseWolfxCencEew(data, isInitial);
+            break;
+        case 'cenc_eqlist':
+            parseWolfxCencEqlist(data, isInitial);
+            break;
+        // 日本数据源不处理
+        case 'jma_eew':
+        case 'jma_eqlist':
+            console.log(`ℹ️ 跳过日本数据源: ${type}`);
+            break;
+        default:
+            console.log(`⚠️ 未知的Wolfx数据类型: ${type}`);
+    }
+}
+
+/**
+ * 解析Wolfx JMA緊急地震速報数据
+ * @param {Object} data - JMA地震预警数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxJmaEew(data, isInitial = false) {
+    // 验证必要字段
+    if (!data.EventID) {
+        console.log('⚠️ JMA地震预警数据缺少EventID，跳过处理');
+        return;
+    }
+
+    // 检查是否是训练报或取消报
+    if (data.isTraining) {
+        console.log('⚠️ JMA训练报，跳过处理');
+        return;
+    }
+
+    if (data.isCancel) {
+        console.log('📢 JMA取消报:', data.EventID);
+        // TODO: 处理取消报
+        return;
+    }
+
+    console.log(`✅ 收到JMA地震预警：${data.Hypocenter || '未知'} ${data.Magunitude || '?'}级`);
+
+    // 构建显示文本
+    const line1 = `日本气象厅紧急地震速报第${data.Serial || 1}报${data.isWarn ? '（警报）' : ''}`;
+    let line2 = '';
+
+    if (data.isAssumption) {
+        // 推定震源（PLUM法）
+        line2 = `${data.OriginTime || '未知时间'} 推定震源${data.Hypocenter || '未知'}，预计最大震度${data.MaxIntensity || '未知'}。`;
+    } else {
+        line2 = `${data.OriginTime || '未知时间'} ${data.Hypocenter || '未知'} 发生<span class="highlight-num">${data.Magunitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '?'}</span>公里，预计最大震度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>。`;
+    }
+
+    // 渲染数据
+    if (isInitial) {
+        renderHistoryData(0, true, line1, line2);
+    } else {
+        renderRealTimeData(0, true, line1, line2);
+    }
+}
+
+/**
+ * 解析Wolfx四川地震局地震预警数据
+ * @param {Object} data - 四川地震局预警数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxScEew(data, isInitial = false) {
+    if (!data.EventID) {
+        console.log('⚠️ 四川地震局预警数据缺少EventID，跳过处理');
+        return;
+    }
+
+    console.log(`✅ 收到四川地震局预警：${data.HypoCenter || '未知'} ${data.Magunitude || '?'}级`);
+
+    const line1 = `四川省地震局预警第${data.ReportNum || 1}报`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magunitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
+
+    if (isInitial) {
+        renderHistoryData(0, true, line1, line2);
+    } else {
+        renderRealTimeData(0, true, line1, line2);
+    }
+}
+
+/**
+ * 解析Wolfx福建地震局地震预警数据
+ * @param {Object} data - 福建地震局预警数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxFjEew(data, isInitial = false) {
+    if (!data.EventID) {
+        console.log('⚠️ 福建地震局预警数据缺少EventID，跳过处理');
+        return;
+    }
+
+    console.log(`✅ 收到福建地震局预警：${data.HypoCenter || '未知'} ${data.Magunitude || '?'}级`);
+
+    const line1 = `福建省地震局预警第${data.ReportNum || 1}报`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magunitude || '?'}</span>级地震${data.isFinal ? '（最终报）' : ''}。`;
+
+    if (isInitial) {
+        renderHistoryData(0, true, line1, line2);
+    } else {
+        renderRealTimeData(0, true, line1, line2);
+    }
+}
+
+/**
+ * 解析Wolfx重庆地震局地震预警数据
+ * @param {Object} data - 重庆地震局预警数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxCqEew(data, isInitial = false) {
+    if (!data.EventID) {
+        console.log('⚠️ 重庆地震局预警数据缺少EventID，跳过处理');
+        return;
+    }
+
+    console.log(`✅ 收到重庆地震局预警：${data.HypoCenter || '未知'} ${data.Magnitude || '?'}级`);
+
+    const line1 = `重庆市地震局预警第${data.ReportNum || 1}报`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magnitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
+
+    if (isInitial) {
+        renderHistoryData(0, true, line1, line2);
+    } else {
+        renderRealTimeData(0, true, line1, line2);
+    }
+}
+
+/**
+ * 解析Wolfx中国地震台网地震预警数据
+ * @param {Object} data - 中国地震台网预警数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxCencEew(data, isInitial = false) {
+    if (!data.EventID) {
+        console.log('⚠️ 中国地震台网预警数据缺少EventID，跳过处理');
+        return;
+    }
+
+    console.log(`✅ 收到中国地震台网预警：${data.HypoCenter || '未知'} ${data.Magnitude || '?'}级`);
+
+    const line1 = `中国地震预警网预警第${data.ReportNum || 1}报`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magnitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
+
+    if (isInitial) {
+        renderHistoryData(0, true, line1, line2);
+    } else {
+        renderRealTimeData(0, true, line1, line2);
+    }
+}
+
+/**
+ * 解析Wolfx中国地震台网地震信息列表
+ * @param {Object} data - 地震信息列表数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxCencEqlist(data, isInitial = false) {
+    // 查找第一条地震信息（键名为 "No1"）
+    const firstQuake = data['No1'];
+    if (!firstQuake || !firstQuake.location) {
+        console.log('⚠️ 中国地震台网地震信息数据无效');
+        return;
+    }
+
+    console.log(`✅ 收到中国地震台网地震信息：${firstQuake.location} ${firstQuake.magnitude}级`);
+
+    const dataType = firstQuake.type === 'automatic' ? '自动测定' : '正式测定';
+    const line1 = `中国地震台网中心${dataType}`;
+    const line2 = `${firstQuake.time || '未知时间'} ${firstQuake.location} 发生<span class="highlight-num">${firstQuake.magnitude}</span>级地震，深度<span class="highlight-num">${firstQuake.depth}</span>公里。`;
+
+    if (isInitial) {
+        renderHistoryData(1, true, line1, line2);
+    } else {
+        renderRealTimeData(1, true, line1, line2);
+    }
+}
+
+/**
+ * 解析Wolfx JMA地震情報列表
+ * @param {Object} data - JMA地震信息列表数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxJmaEqlist(data, isInitial = false) {
+    // 查找第一条地震信息（键名为 "No1"）
+    const firstQuake = data['No1'];
+    if (!firstQuake || !firstQuake.location) {
+        console.log('⚠️ JMA地震信息数据无效');
+        return;
+    }
+
+    console.log(`✅ 收到JMA地震信息：${firstQuake.location} ${firstQuake.magnitude}级`);
+
+    const line1 = `日本气象厅地震情报`;
+    const line2 = `${firstQuake.time || '未知时间'} ${firstQuake.location} 发生<span class="highlight-num">${firstQuake.magnitude}</span>级地震，深度<span class="highlight-num">${firstQuake.depth}</span>公里，最大震度<span class="highlight-num">${firstQuake.shindo}</span>${firstQuake.info ? `，${firstQuake.info}` : ''}。`;
+
+    if (isInitial) {
+        renderHistoryData(1, true, line1, line2);
+    } else {
+        renderRealTimeData(1, true, line1, line2);
+    }
+}
+
+/**
+ * 获取台风数据
+ * 从台风API获取当前活跃台风数据
+ */
+async function fetchTyphoonData() {
+    try {
+        const response = await fetch(CONFIG.TYPHOON_API);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        return data;
+    } catch (err) {
+        console.error("获取台风数据失败：", err);
+        return null;
+    }
+}
+
+/**
+ * 转换台风API数据格式为内部格式
+ * @param {Array} apiData - API返回的台风数据数组
+ * @returns {Array} - 转换后的台风数据数组
+ */
+function convertTyphoonApiData(apiData) {
+    if (!Array.isArray(apiData) || apiData.length === 0) {
+        return null;
+    }
+
+    return apiData.map(tf => {
+        // 从points数组中获取最新的实况点数据
+        let latestPoint = null;
+        if (Array.isArray(tf.points) && tf.points.length > 0) {
+            // 获取最后一个点作为最新实况点（points数组按时间排序）
+            latestPoint = tf.points[tf.points.length - 1];
+        }
+
+        // 构建内部格式的台风数据
+        // 注意：API使用的字段名与内部格式不同
+        return {
+            id: tf.tfid || "",
+            name: tf.name || "",
+            name_en: tf.enname || "",
+            // 优先使用最新实况点数据，其次使用顶层字段
+            latitude: latestPoint?.lat || tf.centerlat || "",
+            longitude: latestPoint?.lng || tf.centerlng || "",
+            // API字段映射：strong -> type, speed -> windSpeed
+            type: latestPoint?.strong || "",
+            power: latestPoint?.power || "",
+            pressure: latestPoint?.pressure || "",
+            windSpeed: latestPoint?.speed || "",  // API: speed (米/秒)
+            // API字段映射：movedirection -> moveDirection, movespeed -> moveSpeed
+            moveDirection: latestPoint?.movedirection || "",
+            moveSpeed: latestPoint?.movespeed || "",  // API: movespeed (公里/小时)
+            radius7: latestPoint?.radius7 || "",
+            radius10: latestPoint?.radius10 || "",
+            updateTime: latestPoint?.time || tf.starttime || "",
+            // 保留原始数据的额外字段
+            isactive: tf.isactive,
+            warnlevel: tf.warnlevel,
+            ckposition: tf.ckposition,
+            jl: tf.jl
+        };
+    });
+}
+
+/**
+ * 解析并显示台风数据（Wolfx数据源专用）
+ * @param {Object|Array} data - API返回的台风数据
+ * @param {boolean} isInitial - 是否是初始化数据
+ */
+function parseWolfxTyphoonData(data, isInitial = false) {
+    // 检查是否是"当前无台风"消息
+    if (data && data.msg === "当前无台风") {
+        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+        currentTyphoonData = null;
+        lastTyphoon = "";
+        return;
+    }
+
+    // 转换数据格式
+    const convertedData = convertTyphoonApiData(data);
+    if (!convertedData || convertedData.length === 0) {
+        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+        currentTyphoonData = null;
+        lastTyphoon = "";
+        return;
+    }
+
+    console.log(`✅ 收到台风数据：共${convertedData.length}个台风`);
+
+    // 使用现有的parseTyphoonData函数处理
+    parseTyphoonData(convertedData, "wolfx", isInitial);
+}
+
+/**
  * 发送HTTP请求的工具函数
  * @param {string} url - 请求URL
  * @returns {Promise<Object>} - 响应数据
@@ -975,6 +1310,46 @@ function initIntensityWss() {
 }
 
 /**
+ * 启动台风数据定时更新（仅Wolfx数据源）
+ * 每10分钟更新一次台风数据
+ */
+function startTyphoonUpdateTimer() {
+    if (typhoonUpdateTimer) clearInterval(typhoonUpdateTimer);
+
+    // 只有在使用Wolfx数据源时才启动定时更新
+    if (CONFIG.DATA_SOURCE !== "wolfx") {
+        return;
+    }
+
+    typhoonUpdateTimer = setInterval(async () => {
+        if (CONFIG.PAGE_ENABLED[5] && CONFIG.DATA_SOURCE === "wolfx") {
+            try {
+                console.log("🌀 定时更新台风数据...");
+                const typhoonData = await fetchTyphoonData();
+                if (typhoonData) {
+                    parseWolfxTyphoonData(typhoonData, false);
+                }
+            } catch (err) {
+                console.error("定时更新台风数据失败：", err);
+            }
+        }
+    }, 10 * 60 * 1000); // 每10分钟更新一次
+
+    console.log("✅ 台风数据定时更新已启动（每10分钟）");
+}
+
+/**
+ * 停止台风数据定时更新
+ */
+function stopTyphoonUpdateTimer() {
+    if (typhoonUpdateTimer) {
+        clearInterval(typhoonUpdateTimer);
+        typhoonUpdateTimer = null;
+        console.log("⏹️ 台风数据定时更新已停止");
+    }
+}
+
+/**
  * 关闭Fan Studio烈度速报WebSocket连接
  */
 function closeFanStudioWss() {
@@ -1131,6 +1506,191 @@ function initFanStudioWss() {
         },
         reconnectCallback: initFanStudioWss,
         reconnectCount: fanStudioReconnectCount  // 使用当前值，不在此处递增
+    });
+}
+
+/**
+ * 关闭Wolfx WebSocket连接
+ */
+function closeWolfxWss() {
+    if (wolfxWebSocket) {
+        try {
+            wolfxWebSocket.close(1000, "Wolfx WSS主动关闭");
+            console.log("✅ Wolfx WebSocket已关闭");
+        } catch (err) {
+            console.error("关闭Wolfx WebSocket失败：", err);
+        } finally {
+            wolfxWebSocket = null;
+        }
+    }
+    if (wolfxPingTimer) {
+        clearInterval(wolfxPingTimer);
+        wolfxPingTimer = null;
+    }
+}
+
+/**
+ * Wolfx WebSocket重连函数
+ */
+function wolfxWssRetry() {
+    if (wolfxPingTimer) clearInterval(wolfxPingTimer);
+
+    wolfxReconnectCount++;
+
+    const maxRetry = CONFIG.MAX_WS_RECONNECT || 0;
+    if (maxRetry > 0 && wolfxReconnectCount >= maxRetry) {
+        console.log(`❌ Wolfx连接失败（重试${wolfxReconnectCount}次），停止重连`);
+        closeWolfxWss();
+        if (CONFIG.SHOW_NETWORK_STATUS) {
+            renderHistoryData(0, false, "Wolfx数据源连接失败");
+            renderHistoryData(1, false, "Wolfx数据源连接失败");
+        }
+        return;
+    }
+
+    const delay = Math.min(3000 * Math.pow(2, wolfxReconnectCount), 30000);
+    setTimeout(initWolfxWss, delay);
+}
+
+/**
+ * 初始化Wolfx WebSocket连接
+ */
+function initWolfxWss() {
+    if (isConnectingWolfxWs) {
+        console.log('⚠️ Wolfx WebSocket正在连接中，跳过重复连接');
+        return;
+    }
+
+    // 检查是否已有活跃的WebSocket连接
+    if (wolfxWebSocket && wolfxWebSocket.readyState === 1) {
+        console.log('✅ Wolfx WebSocket已是活跃状态，跳过重新初始化');
+        return;
+    }
+
+    isConnectingWolfxWs = true;
+    closeWolfxWss();
+
+    wolfxWebSocket = createWebSocket(CONFIG.WOLFX_WS_ALL, {
+        onOpen: (socket) => {
+            isConnectingWolfxWs = false; // 释放连接锁
+            markDataSourceConnected('wolfx'); // 标记Wolfx数据源已连接
+            console.log("✅ Wolfx WebSocket连接成功");
+            wolfxReconnectCount = 0;
+            isWolfxInited = true;
+
+            // 连接成功后主动请求初始数据
+            console.log("🔄 Wolfx WebSocket重连成功，正在请求数据...");
+
+            // 使用固定间隔发送查询指令（每条间隔2秒）
+            const queryCommands = [
+                "query_sceew",
+                "query_fjeew",
+                "query_cenceew",
+                "query_cenceqlist"
+            ];
+
+            queryCommands.forEach((cmd, index) => {
+                setTimeout(() => {
+                    if (socket && socket.readyState === 1) {
+                        try {
+                            socket.send(cmd);
+                            console.log(`📤 已发送查询指令: ${cmd}`);
+                        } catch (err) {
+                            console.error(`发送 ${cmd} 失败：`, err);
+                        }
+                    }
+                }, 50 + index * 2000); // 每条指令间隔2秒
+            });
+
+            // 同时获取台风数据（Wolfx不提供台风信息，使用Fan Studio台风API）
+            // 注意：此台风API仅在Wolfx数据源时调用
+            setTimeout(async () => {
+                if (CONFIG.PAGE_ENABLED[5] && CONFIG.DATA_SOURCE === "wolfx") {
+                    try {
+                        console.log("🌀 正在获取台风数据（Fan Studio台风API）...");
+                        const typhoonData = await fetchTyphoonData();
+                        if (typhoonData) {
+                            parseWolfxTyphoonData(typhoonData, true);
+                        }
+                        // 启动台风数据定时更新
+                        startTyphoonUpdateTimer();
+                    } catch (err) {
+                        console.error("初始化台风数据失败：", err);
+                    }
+                }
+            }, 100); // 稍微延迟以确保初始化完成
+
+            // Wolfx心跳包：服务端每分钟发送一次，客户端回复ping（推荐）
+            // 这里设置30秒发送一次ping
+            wolfxPingTimer = setInterval(() => {
+                if (socket && socket.readyState === 1) {
+                    try {
+                        socket.send("ping");
+                    } catch (err) {
+                        console.error("发送Wolfx ping失败：", err);
+                        clearInterval(wolfxPingTimer);
+                        if (socket && socket.readyState !== 3) socket.close();
+                    }
+                }
+            }, 30000);
+        },
+        onMessage: (e) => {
+            if (!e.data) return;
+
+            // 尝试解析JSON
+            if (e.data.startsWith("{")) {
+                try {
+                    const msg = JSON.parse(e.data);
+                    const type = msg.type;
+
+                    if (!type) {
+                        console.log('⚠️ Wolfx数据缺少type字段，跳过处理');
+                        return;
+                    }
+
+                    // 心跳包和pong包处理
+                    if (type === 'heartbeat') {
+                        console.log('💓 收到Wolfx心跳包');
+                        // 可选：回复ping包
+                        return;
+                    }
+
+                    if (type === 'pong') {
+                        console.log('💓 收到Wolfx pong包');
+                        return;
+                    }
+
+                    // 处理不同类型的Wolfx数据（查询获取的数据为初始化数据）
+                    parseWolfxData(msg, type, true);
+                } catch (err) {
+                    console.error("❌ Wolfx数据解析失败：", err, "原始数据：", e.data);
+                }
+                return;
+            }
+
+            // 处理文本格式消息（如 "ping" 等）
+            if (e.data === "ping") {
+                // 服务端不会发送ping，客户端才发送ping
+                return;
+            }
+        },
+        onClose: (event) => {
+            isConnectingWolfxWs = false; // 释放连接锁
+            console.log(`Wolfx WebSocket关闭：${event.code} - ${event.reason}`);
+
+            // 更新Wolfx数据源状态（如果不是正常关闭）
+            if (event.code !== 1000) {
+                updateDataSourceStatus('wolfx', event.code, wolfxReconnectCount);
+            }
+
+            clearInterval(wolfxPingTimer);
+            wolfxWebSocket = null;
+        },
+        onError: () => {
+            isConnectingWolfxWs = false; // 释放连接锁
+        },
+        reconnectCallback: initWolfxWss,
+        reconnectCount: wolfxReconnectCount
     });
 }
 
@@ -1588,10 +2148,10 @@ function parseTyphoonData(data, source, isInitial = false) {
 
         // 风圈半径信息
         let radiusInfo = "";
-        if (typhoon.radius7 !== null && typhoon.radius7 !== undefined) {
+        if (typhoon.radius7 && typhoon.radius7 !== "" && typhoon.radius7 !== "null") {
             radiusInfo += `七级风圈半径<span class="highlight-num">${typhoon.radius7}</span>公里`;
         }
-        if (typhoon.radius10 !== null && typhoon.radius10 !== undefined) {
+        if (typhoon.radius10 && typhoon.radius10 !== "" && typhoon.radius10 !== "null") {
             if (radiusInfo) radiusInfo += "，";
             radiusInfo += `十级风圈半径<span class="highlight-num">${typhoon.radius10}</span>公里`;
         }
@@ -2509,6 +3069,7 @@ window.onbeforeunload=()=>{
     if(intensityExpiryCheckTimer)clearInterval(intensityExpiryCheckTimer);
     if(tsunamiExpiryCheckTimer)clearInterval(tsunamiExpiryCheckTimer);
     if(typhoonExpiryCheckTimer)clearInterval(typhoonExpiryCheckTimer);
+    stopTyphoonUpdateTimer(); // 清理台风数据定时更新
     if(webSocket&&webSocket.readyState!==3)webSocket.close(1000,"页面关闭");
     measureDataCache={};
     alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };

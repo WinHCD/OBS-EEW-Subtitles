@@ -10,14 +10,22 @@
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
-| `WS_ALL` | 所有预警数据的 WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | 包含地震预警、台网测定、海啸预警、气象预警、台风实况等数据 |
-| `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | `"auto"`: 优先NowQuake，失败自动切换Fan Studio；`"nowquake"`: 仅NowQuake；`"fanstudio"`: 仅Fan Studio |
+| `DATA_SOURCE` | 主数据源选择 | `"wolfx"` | `"fanstudio"`: 使用Fan Studio数据源；`"wolfx"`: 使用Wolfx数据源 |
+| `WS_ALL` | Fan Studio WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | Fan Studio 数据源地址 |
+| `WOLFX_WS_ALL` | Wolfx WebSocket 连接地址 | `wss://ws-api.wolfx.jp/all_eew` | Wolfx 数据源地址 |
+| `TYPHOON_API` | 台风预警API地址 | `https://api.fanstudio.tech/we/typhoon.php` | 台风数据获取地址 |
+
+### 2. 烈度速报配置
+
+| 配置项 | 说明 | 默认值 | 备注 |
+|--------|------|--------|------|
+| `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | `"auto"`: 优先NowQuake，失败自动切换Fan Studio；`"nowquake"`: 仅NowQuake；`"fanstudio"`: 仅Fan Studio；`"both"`: 同时使用两个数据源 |
 | `INT_HTTP_LASTID` | NowQuake烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 仅 NowQuake 使用 |
 | `INT_HTTP_EVENT` | NowQuake烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 仅 NowQuake 使用 |
 | `INT_WSS_REAL` | NowQuake烈度速报 WebSocket 接口 - 实时数据 | `wss://api-cencint-public.nowquake.cn/websocket` | 用于获取烈度速报的实时数据 |
 | `INT_WSS_FANSTUDIO` | Fan Studio烈度速报 WebSocket 接口 | `wss://ws.fanstudio.tech/cenc-ir` | Fan Studio 烈度速报数据源 |
 
-### 2. 显示参数配置
+### 3. 显示参数配置
 
 | 配置项 | 说明 | 默认值 | 推荐范围 | 备注 |
 |--------|------|--------|----------|------|
@@ -29,7 +37,7 @@
 | `MIN_HEIGHT` | 最小行高（像素） | `60` | 40-100 | 控制每行文本的最小高度 |
 | `HIGHLIGHT_COLOR` | 高亮文本颜色 | `#fff` | 任何有效的 CSS 颜色值 | 控制高亮数字的显示颜色 |
 
-### 3. 网络请求配置
+### 4. 网络请求配置
 
 | 配置项 | 说明 | 默认值 | 推荐范围 | 备注 |
 |--------|------|--------|----------|------|
@@ -38,13 +46,6 @@
 | `HTTP_TIMEOUT` | HTTP 请求超时（毫秒） | `5000` | 3000-10000 | HTTP 请求的超时时间 |
 | `MAX_WS_RECONNECT` | WebSocket 最大重连次数 | `0` | 0-20 | `0` 表示不限制重连次数；设置大于 0 的值时，达到该次数后停止重连 |
 | `SHOW_NETWORK_STATUS` | 是否显示网络状态提示 | `true` | `true`/`false` | 设置为 `false` 时，网络断开或数据源连接失败时不显示提示信息 |
-
-### 4. 烈度速报配置
-
-| 配置项 | 说明 | 默认值 | 推荐范围 | 备注 |
-|--------|------|--------|----------|------|
-| `INTENSITY_CONFIG.MAX_STATION_DISTANCE` | 台站最大距离（公里） | `50` | 20-100 | 只显示距离震中不超过此距离的台站数据 |
-| `INTENSITY_CONFIG.MIN_INTENSITY` | 最小计测烈度 | `0.1` | 0-1 | 只显示计测烈度大于此值的台站数据 |
 
 ### 5. 页面开关配置
 
@@ -59,13 +60,20 @@
 | `PAGE_ENABLED[5]` | 台风实况页面启用状态 | `true` | 设置为 `false` 时，台风实况页面将被禁用 |
 | `PAGE_ENABLED[6]` | 应用信息页面启用状态 | `true` | 设置为 `false` 时，应用信息页面将被禁用 |
 
-### 6. 应用信息配置
+### 6. 烈度速报筛选配置
+
+| 配置项 | 说明 | 默认值 | 推荐范围 | 备注 |
+|--------|------|--------|----------|------|
+| `INTENSITY_CONFIG.MAX_STATION_DISTANCE` | 台站最大距离（公里） | `50` | 20-100 | 只显示距离震中不超过此距离的台站数据 |
+| `INTENSITY_CONFIG.MIN_INTENSITY` | 最小计测烈度 | `0.1` | 0-1 | 只显示计测烈度大于此值的台站数据 |
+
+### 7. 应用信息配置
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
 | `APP_INFO` | 应用信息文本 | `"所有预警信息仅供参考..."` | 显示在应用信息页面的文本内容 |
 
-### 7. 页面颜色配置
+### 8. 页面颜色配置
 
 `PAGE_COLOR_MAP` 是一个对象，用于设置不同页面的默认文本颜色：
 
@@ -83,7 +91,7 @@
 > - 气象预警页面的标签背景色会根据预警级别动态变化（红/橙/黄/蓝），断开连接或数据源故障时会自动恢复为默认紫色。
 > - 海啸预警页面的标签背景色会根据预警级别动态变化（红/橙/黄/蓝），断开连接或数据源故障时会自动恢复为默认亮绿色。
 
-### 8. 常量定义
+### 9. 常量定义
 
 | 常量 | 说明 | 值 | 备注 |
 |------|------|-----|------|
@@ -100,6 +108,7 @@
 ## 注意事项
 
 ### 数据源配置
+- 不同数据源提供的数据范围有所不同，请根据实际需求选择
 - 修改数据源地址时，请确保新的地址提供与原地址相同格式的数据，否则可能导致数据解析失败
 - `INTENSITY_SOURCE` 设置为 `"auto"` 时，系统会优先尝试 NowQuake 数据源，连接失败后自动切换到 Fan Studio 数据源
 - 当两个数据源都无法连接时，系统将停止重连并显示"暂无烈度速报数据"
@@ -126,44 +135,70 @@
 
 ## 示例配置
 
-以下是一个示例配置，适用于大多数场景：
+以下是一个示例配置，使用Wolfx数据源：
 
 ```javascript
-const CONFIG={
-    WS_ALL:"wss://ws.fanstudio.tech/all",
-    INTENSITY_SOURCE:"auto",
-    INT_HTTP_LASTID:"https://api-cencint-public.nowquake.cn/lastid",
-    INT_HTTP_EVENT:"https://api-cencint-public.nowquake.cn/event/",
-    INT_WSS_REAL:"wss://api-cencint-public.nowquake.cn/websocket",
-    INT_WSS_FANSTUDIO:"wss://ws.fanstudio.tech/cenc-ir",
-    SCROLL_SPEED:120,
-    NO_OVERFLOW_DELAY:5000,
-    FORCED_SHOW:60000,
-    TRANSITION:500,
-    WEATHER_FORCED:false,
-    MIN_HEIGHT:60,
-    HIGHLIGHT_COLOR:"#fff",
-    MAX_HTTP_RETRY:10,
-    RETRY_DELAY:10000,
-    HTTP_TIMEOUT:5000,
-    MAX_WS_RECONNECT:0,
-    SHOW_NETWORK_STATUS:true,
-    PAGE_ENABLED:{
-        0:true, // 地震预警
-        1:true, // 台网测定
-        2:true, // 烈度速报
-        3:true, // 海啸预警
-        4:true, // 气象预警
-        5:true, // 台风实况
-        6:true  // 应用信息
+const CONFIG = {
+    // 数据源配置
+    DATA_SOURCE: "wolfx",
+    WS_ALL: "wss://ws.fanstudio.tech/all",
+    WOLFX_WS_ALL: "wss://ws-api.wolfx.jp/all_eew",
+    TYPHOON_API: "https://api.fanstudio.tech/we/typhoon.php",
+
+    // 烈度速报配置
+    INTENSITY_SOURCE: "auto",
+    INT_HTTP_LASTID: "https://api-cencint-public.nowquake.cn/lastid",
+    INT_HTTP_EVENT: "https://api-cencint-public.nowquake.cn/event/",
+    INT_WSS_REAL: "wss://api-cencint-public.nowquake.cn/websocket",
+    INT_WSS_FANSTUDIO: "wss://ws.fanstudio.tech/cenc-ir",
+
+    // 显示参数配置
+    SCROLL_SPEED: 120,
+    NO_OVERFLOW_DELAY: 5000,
+    FORCED_SHOW: 60000,
+    TRANSITION: 500,
+    WEATHER_FORCED: false,
+    MIN_HEIGHT: 60,
+    HIGHLIGHT_COLOR: "#fff",
+
+    // 网络请求配置
+    MAX_HTTP_RETRY: 10,
+    RETRY_DELAY: 10000,
+    HTTP_TIMEOUT: 5000,
+    MAX_WS_RECONNECT: 0,
+    SHOW_NETWORK_STATUS: true,
+
+    // 页面开关配置
+    PAGE_ENABLED: {
+        0: true, // 地震预警
+        1: true, // 台网测定
+        2: true, // 烈度速报
+        3: true, // 海啸预警
+        4: true, // 气象预警
+        5: true, // 台风实况
+        6: true  // 应用信息
     },
-    INTENSITY_CONFIG:{
-        MAX_STATION_DISTANCE:50,
-        MIN_INTENSITY:0.1
+
+    // 烈度速报筛选配置
+    INTENSITY_CONFIG: {
+        MAX_STATION_DISTANCE: 50,
+        MIN_INTENSITY: 0.1
     },
-    APP_INFO:"所有预警信息仅供参考，仅限交流学习使用，请以当地官方发布信息为准。地震不可准确预测，不要盼震盼灾，请理性讨论。 "
+
+    // 应用信息配置
+    APP_INFO: "所有预警信息仅供参考，仅限交流学习使用，请以当地官方发布信息为准。地震不可准确预测，不要盼震盼灾，请理性讨论。"
 };
-const PAGE_COLOR_MAP={0:"#ff3838",1:"#3399ff",2:"#00e0e0",3:"#32CD32",4:"#9370DB",5:"#FF8C00",6:"#fff"};
+
+const PAGE_COLOR_MAP = {
+    0: "#ff3838",
+    1: "#3399ff",
+    2: "#00e0e0",
+    3: "#32CD32",
+    4: "#9370DB",
+    5: "#FF8C00",
+    6: "#fff"
+};
+
 const ONE_DAY = 24 * 60 * 60 * 1000;
 ```
 
