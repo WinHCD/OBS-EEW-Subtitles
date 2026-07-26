@@ -16,7 +16,7 @@ let isFanStudioInited=false;
 let nowQuakeFailed=false; // NowQuake连接失败标记（用于自动切换到Fan Studio）
 let fanStudioFailed=false; // Fan Studio连接失败标记
 let intensitySourceStopped=false; // 烈度速报数据源停止连接标记
-let wolfxWebSocket=null,wolfxPingTimer=null,wolfxReconnectCount=0;
+let wolfxWebSocket=null,wolfxPingTimer=null,wolfxReconnectCount=0,wolfxSeenTypes={};
 let isWolfxInited=false;
 let typhoonUpdateTimer=null; // 台风数据定时更新定时器
 let animationIds={}; // 动画ID管理
@@ -1577,6 +1577,7 @@ function initWolfxWss() {
             markDataSourceConnected('wolfx'); // 标记Wolfx数据源已连接
             console.log("✅ Wolfx WebSocket连接成功");
             wolfxReconnectCount = 0;
+            wolfxSeenTypes = {};
             isWolfxInited = true;
 
             // 连接成功后主动请求初始数据
@@ -1662,8 +1663,10 @@ function initWolfxWss() {
                         return;
                     }
 
-                    // 处理不同类型的Wolfx数据（查询获取的数据为初始化数据）
-                    parseWolfxData(msg, type, true);
+                    // 首次收到该类型为初始化数据，后续为更新数据（强制显示）
+                    const isInitial = !wolfxSeenTypes[type];
+                    wolfxSeenTypes[type] = true;
+                    parseWolfxData(msg, type, isInitial);
                 } catch (err) {
                     console.error("❌ Wolfx数据解析失败：", err, "原始数据：", e.data);
                 }
