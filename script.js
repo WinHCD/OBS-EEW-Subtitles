@@ -1061,6 +1061,7 @@ function convertTyphoonApiData(apiData) {
             moveSpeed: latestPoint?.movespeed || "",  // API: movespeed (公里/小时)
             radius7: latestPoint?.radius7 || "",
             radius10: latestPoint?.radius10 || "",
+            radius12: latestPoint?.radius12 || "",
             updateTime: latestPoint?.time || tf.starttime || "",
             // 保留原始数据的额外字段
             isactive: tf.isactive,
@@ -1585,6 +1586,7 @@ function initWolfxWss() {
             const queryCommands = [
                 "query_sceew",
                 "query_fjeew",
+                "query_cqeew",
                 "query_cenceew",
                 "query_cenceqlist"
             ];
@@ -2112,7 +2114,10 @@ function parseTyphoonData(data, source, isInitial = false) {
     console.log(`✅ 收到台风实况数据：共${typhoonData.length}个台风`);
 
     // 使用 md5 作为唯一标识（台风数据可能有多个，用md5判断整体数据是否更新）
-    const uniqueId = md5Value || `typhoon_${Date.now()}`;
+    // Wolfx HTTP数据源无md5，使用关键字段组合作为唯一标识，仅数据真正变化时才触发更新
+    const uniqueId = md5Value || typhoonData.map(t =>
+        `${t.id}_${t.latitude}_${t.longitude}_${t.power}_${t.pressure}_${t.moveSpeed}_${t.moveDirection}_${t.radius7}_${t.radius10}_${t.radius12}_${t.windSpeed}_${t.type}`
+    ).join('|');
     if (uniqueId === lastTyphoon) return;
     lastTyphoon = uniqueId;
 
@@ -2154,6 +2159,10 @@ function parseTyphoonData(data, source, isInitial = false) {
         if (typhoon.radius10 && typhoon.radius10 !== "" && typhoon.radius10 !== "null") {
             if (radiusInfo) radiusInfo += "，";
             radiusInfo += `十级风圈半径<span class="highlight-num">${typhoon.radius10}</span>公里`;
+        }
+        if (typhoon.radius12 && typhoon.radius12 !== "" && typhoon.radius12 !== "null") {
+            if (radiusInfo) radiusInfo += "，";
+            radiusInfo += `十二级风圈半径<span class="highlight-num">${typhoon.radius12}</span>公里`;
         }
 
         // 构建台风详细信息
