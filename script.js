@@ -23,10 +23,10 @@ let animationIds={}; // 动画ID管理
 let memoryCleanupTimer=null; // 内存清理定时器
 let intensityExpiryCheckTimer=null; // 烈度速报过期检查定时器
 let tsunamiExpiryCheckTimer=null; // 海啸预警过期检查定时器
-let typhoonExpiryCheckTimer=null; // 台风实况过期检查定时器
+let typhoonExpiryCheckTimer=null; // 台风信息过期检查定时器
 let currentIntensityData=null; // 当前显示的烈度速报数据
 let currentTsunamiData=null; // 当前显示的海啸预警数据
-let currentTyphoonData=null; // 当前显示的台风实况数据
+let currentTyphoonData=null; // 当前显示的台风信息数据
 let domCache={}; // DOM节点缓存
 let isConnectingMainWs=false; // 主WebSocket连接锁
 let isConnectingIntensityWs=false; // 烈度速报WebSocket连接锁
@@ -134,7 +134,7 @@ const dom={
     startMemoryCleanup();   // 启动内存清理定时器
     startIntensityExpiryCheck(); // 启动烈度速报过期检查定时器
     startTsunamiExpiryCheck(); // 启动海啸预警过期检查定时器
-    startTyphoonExpiryCheck(); // 启动台风实况过期检查定时器
+    startTyphoonExpiryCheck(); // 启动台风信息过期检查定时器
     startNetworkMonitor();  // 启动网络状态监听器
     startPageLogic();       // 启动页面逻辑
     
@@ -1080,7 +1080,7 @@ function convertTyphoonApiData(apiData) {
 function parseWolfxTyphoonData(data, isInitial = false) {
     // 检查是否是"当前无台风"消息
     if (data && data.msg === "当前无台风") {
-        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+        renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
         currentTyphoonData = null;
         lastTyphoon = "";
         return;
@@ -1089,7 +1089,7 @@ function parseWolfxTyphoonData(data, isInitial = false) {
     // 转换数据格式
     const convertedData = convertTyphoonApiData(data);
     if (!convertedData || convertedData.length === 0) {
-        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+        renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
         currentTyphoonData = null;
         lastTyphoon = "";
         return;
@@ -2087,8 +2087,8 @@ function parseWeatherData(data, source, isInitial = false) {
 }
 
 /**
- * 解析台风实况数据
- * @param {Object} data - 台风实况数据对象
+ * 解析台风信息数据
+ * @param {Object} data - 台风信息数据对象
  */
 function parseTyphoonData(data, source, isInitial = false) {
     // data 参数可能是数组（直接传入Data数组）或对象（包含Data字段）
@@ -2105,13 +2105,13 @@ function parseTyphoonData(data, source, isInitial = false) {
     }
 
     if (!typhoonData || typhoonData.length === 0) {
-        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+        renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
         currentTyphoonData = null;
         lastTyphoon = "";
         return;
     }
 
-    console.log(`✅ 收到台风实况数据：共${typhoonData.length}个台风`);
+    console.log(`✅ 收到台风信息数据：共${typhoonData.length}个台风`);
 
     // 使用 md5 作为唯一标识（台风数据可能有多个，用md5判断整体数据是否更新）
     // Wolfx HTTP数据源无md5，使用关键字段组合作为唯一标识，仅数据真正变化时才触发更新
@@ -2133,7 +2133,7 @@ function parseTyphoonData(data, source, isInitial = false) {
     };
 
     // 构建台风信息文本
-    let line1 = `中国气象局台风实况（更新时间：${typhoonData[0]?.updateTime || "未知时间"}）`;
+    let line1 = `中国气象局台风信息（更新时间：${typhoonData[0]?.updateTime || "未知时间"}）`;
     let line2 = "";
 
     // 处理多台风情况
@@ -2189,7 +2189,7 @@ function parseTyphoonData(data, source, isInitial = false) {
     // 保存当前显示的台风数据
     currentTyphoonData = { Data: typhoonData, md5: md5Value };
 
-    console.log(`📊 台风实况数据显示：`);
+    console.log(`📊 台风信息数据显示：`);
     console.log(`   第一行：${line1}`);
     console.log(`   第二行：${line2}`);
 
@@ -2226,7 +2226,7 @@ function resetPagesToDefault() {
         renderHistoryData(4, false, "暂无气象预警数据", "", PAGE_COLOR_MAP[4]);
     }
     if (CONFIG.PAGE_ENABLED[5]) {
-        renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+        renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
     }
 }
 
@@ -2663,7 +2663,7 @@ function startTsunamiExpiryCheck() {
     console.log("✅ 海啸预警过期检查定时器已启动");
 }
 
-// 检查台风实况数据是否过期的函数
+// 检查台风信息数据是否过期的函数
 function checkTyphoonExpiry() {
     // 台风数据不会过期，但如果超过24小时没有更新，可能已经消散
     if (currentTyphoonData && currentTyphoonData.Data && currentTyphoonData.Data.length > 0) {
@@ -2671,8 +2671,8 @@ function checkTyphoonExpiry() {
         if (updateTime) {
             const updateDate = new Date(updateTime);
             if (!isNaN(updateDate.getTime()) && Date.now() - updateDate.getTime() > ONE_DAY) {
-                console.log("⚠️  台风实况数据超过24小时未更新，可能已消散，清理显示");
-                renderHistoryData(5, false, "暂无台风实况数据", "", PAGE_COLOR_MAP[5]);
+                console.log("⚠️  台风信息数据超过24小时未更新，可能已消散，清理显示");
+                renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
                 currentTyphoonData = null;
                 lastTyphoon = "";
             }
@@ -2680,12 +2680,12 @@ function checkTyphoonExpiry() {
     }
 }
 
-// 启动台风实况过期检查定时器
+// 启动台风信息过期检查定时器
 function startTyphoonExpiryCheck() {
     if (typhoonExpiryCheckTimer) clearInterval(typhoonExpiryCheckTimer);
     // 每10分钟检查一次是否过期
     typhoonExpiryCheckTimer = setInterval(checkTyphoonExpiry, 10 * 60 * 1000);
-    console.log("✅ 台风实况过期检查定时器已启动");
+    console.log("✅ 台风信息过期检查定时器已启动");
 }
 
 function startMemoryCleanup() {
@@ -2977,7 +2977,7 @@ function showDataSourceError(source, errorType, message) {
     // 根据数据源在对应页面显示错误
     switch (source) {
         case 'main':
-            // 主数据源影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)、台风实况(5)
+            // 主数据源影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)、台风信息(5)
             if (CONFIG.PAGE_ENABLED[0] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
                 renderHistoryData(0, false, message);
             }
