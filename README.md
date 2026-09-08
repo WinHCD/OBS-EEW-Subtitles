@@ -8,12 +8,14 @@
 
 项目支持两种主数据源：
 
-- **Fan Studio**：默认数据源
-- **Wolfx**：备选数据源
+- **Wolfx**：默认数据源
+- **WHEWS**：聚合数据源（需在 `config.js` 中配置鉴权令牌）
+
+台风信息页（台风实况）数据来自 Fan Studio 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关。
 
 ### 核心功能
 
-* 双数据源支持，可自由切换
+* 多数据源支持，可在 Wolfx / WHEWS 之间切换
 * 实时展示地震预警、烈度速报、台风信息等信息
 * 可配置的台站筛选（默认距离≤50公里）
 * 页面开关功能，可根据需要启用或禁用特定页面
@@ -36,8 +38,8 @@
 在 `config.js` 中修改 `DATA_SOURCE` 配置项：
 
 ```javascript
-DATA_SOURCE: "fanstudio"  // 使用Fan Studio数据源（默认）
-DATA_SOURCE: "wolfx"      // 使用Wolfx数据源
+DATA_SOURCE: "wolfx"      // 使用Wolfx数据源（默认）
+DATA_SOURCE: "whews"      // 使用WHEWS数据源
 ```
 
 ### 适配范围

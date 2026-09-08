@@ -1,24 +1,29 @@
 // 配置文件
 const CONFIG = {
     // ==================== 数据源配置 ====================
-    // 主数据源选择: "fanstudio" 或 "wolfx"
+    // 主数据源选择: "wolfx" 或 "whews"
     DATA_SOURCE: "wolfx",
-
-    // Fan Studio WebSocket地址
-    WS_ALL: "wss://ws.fanstudio.tech/all",
 
     // Wolfx WebSocket地址
     WOLFX_WS_ALL: "wss://ws-api.wolfx.jp/all_eew",
 
-    // 台风预警API地址
+    // 台风实况API地址（Fan Studio提供，台风信息页数据来源，与主数据源无关）
     TYPHOON_API: "https://api.fanstudio.tech/we/typhoon.php",
 
+    // ---- WHEWS API 配置 ----
+    // WHEWS 鉴权令牌（格式: wat_xxxxxxxx，在 https://auth.beecld.com 获取）
+    WHEWS_TOKEN: "",
+
+    // WHEWS 聚合端点（包含CEA/CEA-PR/CENC/海啸/气象，除台风外）
+    WHEWS_WS_ALL: "wss://api.2v8.cn/ws/all",
+
+    // WHEWS App鉴权凭证（用于解锁CEA/CEA-PR地震预警，在 https://api.2v8.cn/apply 申请）
+    // 留空则仅接收非CEA源（CENC/海啸/气象），不接收地震预警
+    WHEWS_APP_ID: "",
+    WHEWS_APP_SECRET: "",
+
     // ==================== 烈度速报配置 ====================
-    // 烈度速报数据源选择:
-    // "auto" - 优先NowQuake，连接失败自动切换Fan Studio（推荐）
-    // "nowquake" - 仅使用NowQuake
-    // "fanstudio" - 仅使用Fan Studio
-    // "both" - 同时使用两个数据源
+    // 烈度速报数据源: "nowquake" - 使用NowQuake（目前唯一支持）
     INTENSITY_SOURCE: "auto",
 
     // NowQuake烈度速报HTTP接口 - 获取最新事件ID
@@ -29,9 +34,6 @@ const CONFIG = {
 
     // NowQuake烈度速报WebSocket接口 - 实时数据
     INT_WSS_REAL: "wss://api-cencint-public.nowquake.cn/websocket",
-
-    // Fan Studio烈度速报WebSocket接口
-    INT_WSS_FANSTUDIO: "wss://ws.fanstudio.tech/cenc-ir",
 
     // ==================== 显示参数配置 ====================
     // 滚动速度（像素/秒）

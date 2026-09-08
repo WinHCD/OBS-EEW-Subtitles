@@ -1,20 +1,13 @@
-
-
-let webSocket=null,pingTimer=null,reconnectCount=0;
 let currentPage=0,totalPage=7;
 let timer=null,forcedTimer=null;
-let isForcedShow=false,isScrolling=false,isInited=false;
+let isForcedShow=false,isScrolling=false;
 let lastAlert="",lastMeasure="",lastIntensity="",lastTsunami="",lastWeather="",lastTyphoon="";
 let curScrollingLines=[];
 let measureDataCache={};
-let alertStore = { lastEventId: "", lastSource: "", lastTime: 0, lastProvince: "", lastUpdates: 0 };
+let alertStore = { lastShockTime: "", lastSource: "", lastTime: 0, lastProvince: "", lastUpdates: 0 };
 let intensityWebSocket=null,intensityPingTimer=null,intensityReconnectCount=0;
 let intensityHttpTimer=null,intensityHttpRetryCount=0;
 let isIntensityInited=false;
-let fanStudioWebSocket=null,fanStudioPingTimer=null,fanStudioReconnectCount=0;
-let isFanStudioInited=false;
-let nowQuakeFailed=false; // NowQuake连接失败标记（用于自动切换到Fan Studio）
-let fanStudioFailed=false; // Fan Studio连接失败标记
 let intensitySourceStopped=false; // 烈度速报数据源停止连接标记
 let wolfxWebSocket=null,wolfxPingTimer=null,wolfxReconnectCount=0,wolfxSeenTypes={};
 let isWolfxInited=false;
@@ -28,18 +21,28 @@ let currentIntensityData=null; // 当前显示的烈度速报数据
 let currentTsunamiData=null; // 当前显示的海啸预警数据
 let currentTyphoonData=null; // 当前显示的台风信息数据
 let domCache={}; // DOM节点缓存
-let isConnectingMainWs=false; // 主WebSocket连接锁
 let isConnectingIntensityWs=false; // 烈度速报WebSocket连接锁
-let isConnectingFanStudioWs=false; // Fan Studio WebSocket连接锁
 let isConnectingWolfxWs=false; // Wolfx WebSocket连接锁
 let networkStatusDisplayed=false; // 网络状态是否已显示标记
 
+// WHEWS数据源变量
+let whewsWebSocket=null,whewsPingTimer=null,whewsReconnectCount=0;
+let isConnectingWhewsWs=false;
+let whewsAuthFailed=false; // 鉴权失败标记（4401时置true，停止重连）
+let whewsAccessToken=null; // CEA App鉴权AccessToken
+let whewsAccessExpireAt=0; // AccessToken过期时间戳
+let whewsRefreshTimer=null; // AccessToken续票定时器
+let whewsCeaAuthed=false; // CEA是否已鉴权解锁
+let whewsCeaSeenIds={}; // CEA预警去重缓存
+let whewsCencSeenMd5={}; // CENC情报去重缓存
+let whewsTsunamiSeenIds={}; // 海啸预警去重缓存
+let isWhewsInited=false;
+
 // 数据源连接状态追踪
 let dataSourceStatus = {
-    main: { connected: false, errorType: null, errorMessage: null }, // 主数据源（地震预警等）
     intensity: { connected: false, errorType: null, errorMessage: null }, // 烈度速报NowQuake
-    fanStudio: { connected: false, errorType: null, errorMessage: null },  // 烈度速报Fan Studio
-    wolfx: { connected: false, errorType: null, errorMessage: null } // Wolfx数据源
+    wolfx: { connected: false, errorType: null, errorMessage: null }, // Wolfx数据源
+    whews: { connected: false, errorType: null, errorMessage: null }, // WHEWS数据源
 };
 
 // 错误类型枚举
@@ -94,39 +97,24 @@ const dom={
         console.log("✅ 网络连接正常，正在初始化WebSocket...");
 
         // 根据数据源配置初始化不同的WebSocket连接
-        const dataSource = CONFIG.DATA_SOURCE || "fanstudio";
-        if (dataSource === "wolfx") {
-            // 使用Wolfx数据源
+        const dataSource = CONFIG.DATA_SOURCE || "wolfx";
+        if (dataSource === "whews") {
+            // 使用WHEWS数据源
+            console.log("✅ 使用WHEWS数据源");
+            initWhewsWss();  // 初始化WHEWS多端点WebSocket连接
+        } else {
+            // 使用Wolfx数据源（默认）
             console.log("✅ 使用Wolfx数据源");
             initWolfxWss();  // 初始化Wolfx WebSocket连接
-        } else {
-            // 使用Fan Studio数据源（默认）
-            console.log("✅ 使用Fan Studio数据源");
-            initWebSocket();      // 初始化主WebSocket连接
         }
 
         // 重置烈度速报数据源状态
-        nowQuakeFailed = false;
-        fanStudioFailed = false;
         intensitySourceStopped = false;
 
-        // 根据配置选择烈度速报数据源
-        // "auto": 优先NowQuake，失败自动切换Fan Studio，都失败则停止
-        // "nowquake": 仅使用NowQuake
-        // "fanstudio": 仅使用Fan Studio
-        const source = CONFIG.INTENSITY_SOURCE || "auto";
-        if (source === "auto") {
-            initIntensityHttp();  // 初始化NowQuake烈度速报HTTP请求
-            initIntensityWss();   // 初始化NowQuake烈度速报WebSocket连接
-            console.log("✅ 烈度速报数据源: NowQuake（自动故障转移模式）");
-        } else if (source === "nowquake") {
-            initIntensityHttp();  // 初始化NowQuake烈度速报HTTP请求
-            initIntensityWss();   // 初始化NowQuake烈度速报WebSocket连接
-            console.log("✅ 使用NowQuake烈度速报数据源");
-        } else if (source === "fanstudio") {
-            initFanStudioWss();   // 初始化Fan Studio烈度速报WebSocket连接
-            console.log("✅ 使用Fan Studio烈度速报数据源");
-        }
+        // 烈度速报数据源仅支持NowQuake（"auto"与"nowquake"行为一致）
+        initIntensityHttp();  // 初始化NowQuake烈度速报HTTP请求
+        initIntensityWss();   // 初始化NowQuake烈度速报WebSocket连接
+        console.log("✅ 使用NowQuake烈度速报数据源");
     } else {
         console.log("❌ 网络连接异常，将在网络恢复后自动初始化");
     }
@@ -138,12 +126,8 @@ const dom={
     startNetworkMonitor();  // 启动网络状态监听器
     startPageLogic();       // 启动页面逻辑
     
-    const intensitySource = CONFIG.INTENSITY_SOURCE || "auto";
-    const sourceName = intensitySource === "fanstudio" ? "Fan Studio" : 
-                       intensitySource === "both" ? "NowQuake + Fan Studio" : 
-                       intensitySource === "auto" ? "NowQuake（自动故障转移）" : "NowQuake";
     console.log("✅ 预警OBS版初始化完成（包含最终烈度速报解析逻辑）");
-    console.log(`✅ 烈度速报数据源: ${sourceName}`);
+    console.log("✅ 烈度速报数据源: NowQuake");
     console.log("✅ 内存清理机制已启动");
     console.log("✅ 网络状态监听器已启动");
 })();
@@ -553,61 +537,34 @@ function parseAlertData(data, source, isInitial = false) {
 
     console.log(`✅ 收到地震预警数据：${data.placeName} ${data.magnitude}级`);
 
-    const eventId = data.eventId;
     const isNational = source === "cea";
     const isProvincial = source === "cea-pr";
 
-    // 处理逻辑：
-    // 1. 通过比较 eventId 来判断数据的新旧
-    // 2. eventId 格式为 202509120550.0001，先比较 . 前面的部分，再比较 . 后面的部分
-    // 3. eventId 相同的情况下比较 updates 数值
-    // 4. 优先显示国家级数据
-    
-    // 检查是否有 eventId
-    if (!eventId) {
-        console.log(`⚠️  缺少 eventId 的预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
-        return;
+    // 通过比较 shockTime 来判断数据的新旧（所有数据源格式统一）
+    function isNewerEvent(data) {
+        if (!alertStore.lastShockTime) return true;
+        const t1 = (data.shockTime || "").replace(/[-: ]/g, "");
+        const t2 = alertStore.lastShockTime;
+        if (t1 > t2) return true;  // 新的地震事件
+        if (t1 < t2) return false; // 更旧的地震事件
+        return false; // 同一事件
     }
-    
-    // 比较 eventId 的函数
-    function compareEventId(newId, oldId) {
-        if (!oldId) return true; // 没有旧数据，新数据更        
-        const newParts = newId.split('.');
-        const oldParts = oldId.split('.');
-        
-        // 比较 . 前面的部分
-        if (newParts[0] > oldParts[0]) return true;
-        if (newParts[0] < oldParts[0]) return false;
-        
-        // . 前面的部分相同，比较 . 后面的部分
-        if (newParts[1] > oldParts[1]) return true;
-        if (newParts[1] < oldParts[1]) return false;
-        
-        return false; // eventId 相同
-    }
-    
-    // 比较 updates 的函数
+
     function compareUpdates(newUpdates, oldUpdates) {
         return (parseInt(newUpdates) || 0) > (parseInt(oldUpdates) || 0);
     }
-    
-    // 检查是否是新数据
-    const isEventIdNewer = compareEventId(eventId, alertStore.lastEventId);
-    const isEventIdOlder = compareEventId(alertStore.lastEventId, eventId);
-    const isUpdatesNewer = compareUpdates(data.updates, alertStore.lastUpdates);
-    
-    // 处理逻辑：
-    // 1. 如果 eventId 不同，新的 eventId 更晚，处理
-    // 2. 如果 eventId 相同，updates 更大，处理
-    // 3. 如果是国家级数据，且 eventId 相同或更晚，处理
-    // 4. 其他情况，跳过处理
-    if (isEventIdOlder) {
-        // eventId 更旧，跳过处理
-        console.log(`⚠️  eventId更旧的预警数据，跳过处理：${data.placeName} ${data.magnitude}级`);
+
+    const isEventNewer = isNewerEvent(data);
+    const isEventOlder = !isEventNewer && alertStore.lastShockTime && alertStore.lastShockTime !== (data.shockTime || "").replace(/[-: ]/g, "");
+    const isSameEvent = !isEventNewer && !isEventOlder;
+    const isUpdatesNewer = isSameEvent && compareUpdates(data.updates, alertStore.lastUpdates);
+
+    if (isEventOlder) {
+        console.log(`⚠️  更旧的地震事件，跳过处理：${data.placeName} ${data.magnitude}级`);
         return;
     }
-    
-    if (!isEventIdNewer && !isUpdatesNewer) {
+
+    if (isSameEvent && !isUpdatesNewer) {
         if (!isNational && alertStore.lastSource === "cea") {
             console.log(`⚠️  存在国家级预警数据，跳过处理省级预警数据：${data.placeName} ${data.magnitude}级`);
             return;
@@ -617,10 +574,10 @@ function parseAlertData(data, source, isInitial = false) {
     }
     
     // 确保不同省份的预警能够被处理
-    console.log(`📊 处理预警数据：省份=${data.province || '未知'}，来源=${source}，eventId=${eventId}，updates=${data.updates || 1}`);
+    console.log(`📊 处理预警数据：省份=${data.province || '未知'}，来源=${source}，updates=${data.updates || 1}`);
     
     // 记录处理的预警数据
-    alertStore.lastEventId = eventId;
+    alertStore.lastShockTime = (data.shockTime || "").replace(/[-: ]/g, "");
     alertStore.lastSource = source;
     alertStore.lastUpdates = data.updates || 1;
     alertStore.lastProvince = data.province || "未知";
@@ -782,6 +739,17 @@ function renderMeasureLatest(latestItem, isInitial = false) {
 }
 
 /**
+ * 提取Wolfx震级字段
+ * 兼容 Magnitude、Magunitude、magnitude 三种字段名
+ * @param {Object} data - Wolfx数据对象
+ * @returns {string|number} - 震级值，无则返回空字符串
+ */
+function getWolfxMagnitude(data) {
+    if (!data) return "";
+    return data.Magnitude ?? data.Magunitude ?? data.magnitude ?? "";
+}
+
+/**
  * 解析Wolfx数据
  * 负责处理来自Wolfx的多种数据源类型（仅国内数据）
  * @param {Object} data - Wolfx数据对象
@@ -842,7 +810,8 @@ function parseWolfxJmaEew(data, isInitial = false) {
         return;
     }
 
-    console.log(`✅ 收到JMA地震预警：${data.Hypocenter || '未知'} ${data.Magunitude || '?'}级`);
+    const magnitude = getWolfxMagnitude(data) || '?';
+    console.log(`✅ 收到JMA地震预警：${data.Hypocenter || '未知'} ${magnitude}级`);
 
     // 构建显示文本
     const line1 = `日本气象厅紧急地震速报第${data.Serial || 1}报${data.isWarn ? '（警报）' : ''}`;
@@ -852,7 +821,7 @@ function parseWolfxJmaEew(data, isInitial = false) {
         // 推定震源（PLUM法）
         line2 = `${data.OriginTime || '未知时间'} 推定震源${data.Hypocenter || '未知'}，预计最大震度${data.MaxIntensity || '未知'}。`;
     } else {
-        line2 = `${data.OriginTime || '未知时间'} ${data.Hypocenter || '未知'} 发生<span class="highlight-num">${data.Magunitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '?'}</span>公里，预计最大震度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>。`;
+        line2 = `${data.OriginTime || '未知时间'} ${data.Hypocenter || '未知'} 发生<span class="highlight-num">${magnitude}</span>级地震，深度<span class="highlight-num">${data.Depth || '?'}</span>公里，预计最大震度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>。`;
     }
 
     // 渲染数据
@@ -874,10 +843,11 @@ function parseWolfxScEew(data, isInitial = false) {
         return;
     }
 
-    console.log(`✅ 收到四川地震局预警：${data.HypoCenter || '未知'} ${data.Magunitude || '?'}级`);
+    const magnitude = getWolfxMagnitude(data) || '?';
+    console.log(`✅ 收到四川地震局预警：${data.HypoCenter || '未知'} ${magnitude}级`);
 
     const line1 = `四川省地震局预警第${data.ReportNum || 1}报`;
-    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magunitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${magnitude}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
 
     if (isInitial) {
         renderHistoryData(0, true, line1, line2);
@@ -897,10 +867,11 @@ function parseWolfxFjEew(data, isInitial = false) {
         return;
     }
 
-    console.log(`✅ 收到福建地震局预警：${data.HypoCenter || '未知'} ${data.Magunitude || '?'}级`);
+    const magnitude = getWolfxMagnitude(data) || '?';
+    console.log(`✅ 收到福建地震局预警：${data.HypoCenter || '未知'} ${magnitude}级`);
 
     const line1 = `福建省地震局预警第${data.ReportNum || 1}报`;
-    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magunitude || '?'}</span>级地震${data.isFinal ? '（最终报）' : ''}。`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${magnitude}</span>级地震${data.isFinal ? '（最终报）' : ''}。`;
 
     if (isInitial) {
         renderHistoryData(0, true, line1, line2);
@@ -920,10 +891,11 @@ function parseWolfxCqEew(data, isInitial = false) {
         return;
     }
 
-    console.log(`✅ 收到重庆地震局预警：${data.HypoCenter || '未知'} ${data.Magnitude || '?'}级`);
+    const magnitude = getWolfxMagnitude(data) || '?';
+    console.log(`✅ 收到重庆地震局预警：${data.HypoCenter || '未知'} ${magnitude}级`);
 
     const line1 = `重庆市地震局预警第${data.ReportNum || 1}报`;
-    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magnitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${magnitude}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
 
     if (isInitial) {
         renderHistoryData(0, true, line1, line2);
@@ -943,10 +915,11 @@ function parseWolfxCencEew(data, isInitial = false) {
         return;
     }
 
-    console.log(`✅ 收到中国地震台网预警：${data.HypoCenter || '未知'} ${data.Magnitude || '?'}级`);
+    const magnitude = getWolfxMagnitude(data) || '?';
+    console.log(`✅ 收到中国地震台网预警：${data.HypoCenter || '未知'} ${magnitude}级`);
 
     const line1 = `中国地震预警网预警第${data.ReportNum || 1}报`;
-    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${data.Magnitude || '?'}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
+    const line2 = `${data.OriginTime || '未知时间'} ${data.HypoCenter || '未知'} 发生<span class="highlight-num">${magnitude}</span>级地震，深度<span class="highlight-num">${data.Depth || '未知'}</span>公里，预计最大烈度<span class="highlight-num">${data.MaxIntensity || '未知'}</span>度。`;
 
     if (isInitial) {
         renderHistoryData(0, true, line1, line2);
@@ -968,11 +941,12 @@ function parseWolfxCencEqlist(data, isInitial = false) {
         return;
     }
 
-    console.log(`✅ 收到中国地震台网地震信息：${firstQuake.location} ${firstQuake.magnitude}级`);
+    const magnitude = getWolfxMagnitude(firstQuake) || '?';
+    console.log(`✅ 收到中国地震台网地震信息：${firstQuake.location} ${magnitude}级`);
 
     const dataType = firstQuake.type === 'automatic' ? '自动测定' : '正式测定';
     const line1 = `中国地震台网中心${dataType}`;
-    const line2 = `${firstQuake.time || '未知时间'} ${firstQuake.location} 发生<span class="highlight-num">${firstQuake.magnitude}</span>级地震，深度<span class="highlight-num">${firstQuake.depth}</span>公里。`;
+    const line2 = `${firstQuake.time || '未知时间'} ${firstQuake.location} 发生<span class="highlight-num">${magnitude}</span>级地震，深度<span class="highlight-num">${firstQuake.depth}</span>公里。`;
 
     if (isInitial) {
         renderHistoryData(1, true, line1, line2);
@@ -1008,18 +982,42 @@ function parseWolfxJmaEqlist(data, isInitial = false) {
 
 /**
  * 获取台风数据
- * 从台风API获取当前活跃台风数据
+ * 从台风API获取当前活跃台风数据；支持传入台风编号(tfid)查询历史台风
+ * @param {string|number} [tfid] - 台风编号（如：202606），可选，传入则查询历史台风数据
+ * @returns {Promise<Array|null>} 台风数据数组；接口明确返回"当前无台风"时返回空数组[]；请求失败返回null
  */
-async function fetchTyphoonData() {
+async function fetchTyphoonData(tfid) {
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), CONFIG.HTTP_TIMEOUT);
     try {
-        const response = await fetch(CONFIG.TYPHOON_API);
+        let url = CONFIG.TYPHOON_API;
+        if (tfid !== undefined && tfid !== null && tfid !== "") {
+            url += `?tfid=${encodeURIComponent(tfid)}`;
+        }
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutTimer);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
         const data = await response.json();
-        return data;
+        // 接口统一返回数组格式：[ {台风数据1}, {台风数据2} ]
+        if (Array.isArray(data)) {
+            return data;
+        }
+        // 无台风状态：{"msg":"当前无台风"}
+        if (data && data.msg === "当前无台风") {
+            console.log("🌪️ 当前无生效台风");
+            return [];
+        }
+        // 其他异常返回（如 {"error":true,"msg":"请求失败"}）
+        console.error("获取台风数据失败：", data);
+        return null;
     } catch (err) {
-        console.error("获取台风数据失败：", err);
+        if (err.name === "AbortError") {
+            console.error("获取台风数据超时：", CONFIG.TYPHOON_API);
+        } else {
+            console.error("获取台风数据失败：", err);
+        }
         return null;
     }
 }
@@ -1074,12 +1072,12 @@ function convertTyphoonApiData(apiData) {
 
 /**
  * 解析并显示台风数据（Wolfx数据源专用）
- * @param {Object|Array} data - API返回的台风数据
+ * @param {Array} data - 台风API返回的数据数组（已由fetchTyphoonData处理，"当前无台风"时为空数组）
  * @param {boolean} isInitial - 是否是初始化数据
  */
 function parseWolfxTyphoonData(data, isInitial = false) {
-    // 检查是否是"当前无台风"消息
-    if (data && data.msg === "当前无台风") {
+    // 空数组或非数组表示当前无台风
+    if (!Array.isArray(data) || data.length === 0) {
         renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
         currentTyphoonData = null;
         lastTyphoon = "";
@@ -1192,30 +1190,22 @@ function intWssRetry() {
     if (intensityPingTimer) clearInterval(intensityPingTimer);
     if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
     
-    // 如果已切换到Fan Studio或已停止连接，不再重连
+    // 如果已停止连接，不再重连
     if (intensitySourceStopped) {
         console.log('⚠️ 烈度速报数据源已停止连接，跳过NowQuake重连');
-        return;
-    }
-    
-    const source = CONFIG.INTENSITY_SOURCE || "auto";
-    if (source === "auto" && nowQuakeFailed) {
-        console.log('⚠️ 已切换到Fan Studio，跳过NowQuake重连');
         return;
     }
     
     intensityReconnectCount++;
     
     const maxRetry = CONFIG.MAX_WS_RECONNECT || 0;
-    if (maxRetry > 0 && intensityReconnectCount >= maxRetry && source === "auto" && !nowQuakeFailed) {
-        nowQuakeFailed = true;
-        console.log(`⚠️  NowQuake烈度速报连接失败（重试${intensityReconnectCount}次），自动切换到Fan Studio数据源`);
+    if (maxRetry > 0 && intensityReconnectCount >= maxRetry) {
+        intensitySourceStopped = true;
+        console.log(`❌ NowQuake烈度速报连接失败（重试${intensityReconnectCount}次），停止重连`);
         closeIntWss();
-        fanStudioReconnectCount = 0;
         if (CONFIG.SHOW_NETWORK_STATUS) {
-            renderHistoryData(2, false, "NowQuake数据源连接失败，正在切换到Fan Studio...");
+            renderHistoryData(2, false, "NowQuake数据源连接失败");
         }
-        initFanStudioWss();
         return;
     }
     
@@ -1227,15 +1217,9 @@ function intWssRetry() {
  * 初始化烈度速报WebSocket连接
  */
 function initIntensityWss() {
-    // 如果已停止连接或已切换到Fan Studio，不再初始化
+    // 如果已停止连接，不再初始化
     if (intensitySourceStopped) {
         console.log('⚠️ 烈度速报数据源已停止连接，跳过NowQuake初始化');
-        return;
-    }
-    
-    const source = CONFIG.INTENSITY_SOURCE || "auto";
-    if (source === "auto" && nowQuakeFailed) {
-        console.log('⚠️ 已切换到Fan Studio，跳过NowQuake初始化');
         return;
     }
     
@@ -1317,17 +1301,26 @@ function initIntensityWss() {
 function startTyphoonUpdateTimer() {
     if (typhoonUpdateTimer) clearInterval(typhoonUpdateTimer);
 
-    // 只有在使用Wolfx数据源时才启动定时更新
-    if (CONFIG.DATA_SOURCE !== "wolfx") {
+    // 只在使用Wolfx或WHEWS数据源时启动定时更新
+    if (CONFIG.DATA_SOURCE !== "wolfx" && CONFIG.DATA_SOURCE !== "whews") {
         return;
     }
 
     typhoonUpdateTimer = setInterval(async () => {
-        if (CONFIG.PAGE_ENABLED[5] && CONFIG.DATA_SOURCE === "wolfx") {
+        if (CONFIG.PAGE_ENABLED[5] && (CONFIG.DATA_SOURCE === "wolfx" || CONFIG.DATA_SOURCE === "whews")) {
             try {
                 console.log("🌀 定时更新台风数据...");
                 const typhoonData = await fetchTyphoonData();
-                if (typhoonData) {
+                if (typhoonData === null) {
+                    // 请求失败，保留当前已显示的台风数据
+                    console.log("⚠️ 台风接口请求失败，保留当前数据");
+                    return;
+                }
+                if (CONFIG.DATA_SOURCE === "whews") {
+                    // Fan Studio台风API字段名与内部格式不同，先转换；空数组表示当前无台风
+                    const converted = convertTyphoonApiData(typhoonData) || [];
+                    parseTyphoonData(converted, "whews", false);
+                } else {
                     parseWolfxTyphoonData(typhoonData, false);
                 }
             } catch (err) {
@@ -1348,166 +1341,6 @@ function stopTyphoonUpdateTimer() {
         typhoonUpdateTimer = null;
         console.log("⏹️ 台风数据定时更新已停止");
     }
-}
-
-/**
- * 关闭Fan Studio烈度速报WebSocket连接
- */
-function closeFanStudioWss() {
-    if (fanStudioWebSocket) {
-        try {
-            fanStudioWebSocket.close(1000, "Fan Studio烈度速报WSS主动关闭");
-            console.log("✅ Fan Studio烈度速报WebSocket已关闭");
-        } catch (err) {
-            console.error("关闭Fan Studio烈度速报WebSocket失败：", err);
-        } finally {
-            fanStudioWebSocket = null;
-        }
-    }
-    if (fanStudioPingTimer) {
-        clearInterval(fanStudioPingTimer);
-        fanStudioPingTimer = null;
-    }
-}
-
-/**
- * Fan Studio烈度速报WebSocket重连函数
- */
-function fanStudioWssRetry() {
-    if (fanStudioPingTimer) clearInterval(fanStudioPingTimer);
-    
-    // 如果已停止连接，不再重连
-    if (intensitySourceStopped) {
-        console.log('⚠️ 烈度速报数据源已停止连接，跳过Fan Studio重连');
-        return;
-    }
-    
-    fanStudioReconnectCount++;
-    
-    const source = CONFIG.INTENSITY_SOURCE || "auto";
-    const maxRetry = CONFIG.MAX_WS_RECONNECT || 0;
-    
-    if (maxRetry > 0 && fanStudioReconnectCount >= maxRetry) {
-        if (source === "auto" && !fanStudioFailed) {
-            fanStudioFailed = true;
-            intensitySourceStopped = true;
-            console.log(`❌ Fan Studio烈度速报连接失败（重试${fanStudioReconnectCount}次），所有数据源均无法连接，停止重连`);
-            closeFanStudioWss();
-            if (CONFIG.SHOW_NETWORK_STATUS) {
-                renderHistoryData(2, false, "所有烈度速报数据源均无法连接");
-            }
-            return;
-        } else if (source === "fanstudio") {
-            intensitySourceStopped = true;
-            console.log(`❌ Fan Studio烈度速报连接失败（重试${fanStudioReconnectCount}次），停止重连`);
-            closeFanStudioWss();
-            if (CONFIG.SHOW_NETWORK_STATUS) {
-                renderHistoryData(2, false, "Fan Studio数据源连接失败");
-            }
-            return;
-        }
-    }
-    
-    const delay = Math.min(3000 * Math.pow(2, fanStudioReconnectCount), 30000);
-    setTimeout(initFanStudioWss, delay);
-}
-
-/**
- * 初始化Fan Studio烈度速报WebSocket连接
- */
-function initFanStudioWss() {
-    // 如果已停止连接，不再初始化
-    if (intensitySourceStopped) {
-        console.log('⚠️ 烈度速报数据源已停止连接，跳过Fan Studio初始化');
-        return;
-    }
-    
-    if (isConnectingFanStudioWs) {
-        console.log('⚠️ Fan Studio WebSocket正在连接中，跳过重复连接');
-        return;
-    }
-    
-    // 检查是否已有活跃的WebSocket连接
-    if (fanStudioWebSocket && fanStudioWebSocket.readyState === 1) {
-        console.log('✅ Fan Studio烈度速报WebSocket已是活跃状态，跳过重新初始化');
-        return;
-    }
-    
-    isConnectingFanStudioWs = true;
-    closeFanStudioWss();
-    
-    fanStudioWebSocket = createWebSocket(CONFIG.INT_WSS_FANSTUDIO, {
-        onOpen: (socket) => {
-            isConnectingFanStudioWs = false; // 释放连接锁
-            markDataSourceConnected('fanStudio'); // 标记Fan Studio数据源已连接
-            console.log("✅ Fan Studio烈度速报WebSocket连接成功");
-            fanStudioReconnectCount = 0;
-            isFanStudioInited = true;
-            
-            // 连接成功后主动请求初始数据（与主WebSocket相同的模式）
-            console.log("🔄 Fan Studio烈度速报WebSocket重连成功，正在请求数据...");
-            
-            setTimeout(() => {
-                if (socket && socket.readyState === 1) {
-                    try {
-                        socket.send("query");
-                        console.log("已向Fan Studio发送烈度速报查询请求");
-                    } catch (err) {
-                        console.error("发送Fan Studio查询请求失败：", err);
-                    }
-                }
-            }, 50);
-            
-            fanStudioPingTimer = setInterval(() => {
-                if (socket && socket.readyState === 1) {
-                    try {
-                        socket.send("ping");
-                    } catch (err) {
-                        console.error("发送Fan Studio烈度速报ping失败：", err);
-                        clearInterval(fanStudioPingTimer);
-                        if (socket && socket.readyState !== 3) socket.close();
-                    }
-                }
-            }, 30000);
-        },
-        onMessage: (e) => {
-            if (!e.data || e.data === "ping" || e.data === "pong") return;
-            if (!e.data.startsWith("{")) return;
-            try {
-                const msg = JSON.parse(e.data);
-                if (msg.type === "initial" || msg.type === "update") {
-                    const convertedData = convertFanStudioToNowQuake(msg);
-                    if (convertedData) {
-                        const isInitial = msg.type === "initial";
-                        parseIntensityData(convertedData, isInitial);
-                    }
-                }
-            } catch (err) {
-                console.error("❌ Fan Studio烈度速报数据解析失败：", err, "原始数据：", e.data);
-            }
-        },
-        onClose: (event) => {
-            isConnectingFanStudioWs = false; // 释放连接锁
-            console.log(`Fan Studio烈度速报WebSocket关闭：${event.code} - ${event.reason}`);
-            
-            // 更新Fan Studio数据源状态（如果不是正常关闭）
-            if (event.code !== 1000) {
-                updateDataSourceStatus('fanStudio', event.code, fanStudioReconnectCount);
-            }
-            
-            clearInterval(fanStudioPingTimer);
-            fanStudioWebSocket = null;
-            // 注意：不再在这里调用 fanStudioWssRetry()
-            // 重连逻辑统一由 createWebSocket 的 reconnectCallback 处理
-        },
-        onError: () => {
-            isConnectingFanStudioWs = false; // 释放连接锁
-            // 注意：不再在这里调用 fanStudioWssRetry()
-            // 错误会触发 ws.close()，进而触发 onClose → createWebSocket 的 reconnectCallback
-        },
-        reconnectCallback: initFanStudioWss,
-        reconnectCount: fanStudioReconnectCount  // 使用当前值，不在此处递增
-    });
 }
 
 /**
@@ -1699,6 +1532,475 @@ function initWolfxWss() {
     });
 }
 
+// ==================== WHEWS API 支持 ====================
+
+/**
+ * 构建带鉴权token的WHEWS WebSocket URL
+ * @param {string} baseUrl - 基础URL
+ * @returns {string} - 带token的完整URL
+ */
+function buildWhewsUrl(baseUrl) {
+    if (CONFIG.WHEWS_TOKEN) {
+        return `${baseUrl}?token=${encodeURIComponent(CONFIG.WHEWS_TOKEN)}`;
+    }
+    console.warn('⚠️ WHEWS Token未配置，连接可能失败（关闭码4401）');
+    return baseUrl;
+}
+
+// ---- 统一WHEWS WebSocket连接（ws/all聚合端点） ----
+
+function closeAllWhewsWss() {
+    if (whewsWebSocket && whewsWebSocket.readyState !== 3) {
+        try { whewsWebSocket.close(1000, "客户端主动关闭"); } catch (err) {}
+        whewsWebSocket = null;
+    }
+    clearInterval(whewsPingTimer);
+    whewsPingTimer = null;
+    clearTimeout(whewsRefreshTimer);
+    whewsRefreshTimer = null;
+    whewsReconnectCount = 0;
+    whewsAuthFailed = false;
+    whewsAccessToken = null;
+    whewsAccessExpireAt = 0;
+    whewsCeaAuthed = false;
+    whewsCeaSeenIds = {};
+    whewsCencSeenMd5 = {};
+    whewsTsunamiSeenIds = {};
+    isWhewsInited = false;
+}
+
+/**
+ * 发送WHEWS App鉴权请求（解锁CEA/CEA-PR地震预警）
+ * @param {WebSocket} socket - 当前连接的WebSocket
+ */
+function whewsSendAuth(socket) {
+    if (!CONFIG.WHEWS_APP_ID || !CONFIG.WHEWS_APP_SECRET) {
+        console.warn('⚠️ 未配置WHEWS_APP_ID/WHEWS_APP_SECRET，跳过CEA鉴权，仅接收非CEA源');
+        return;
+    }
+    if (!socket || socket.readyState !== 1) return;
+    console.log('🔑 正在发送WHEWS App鉴权请求...');
+    try {
+        socket.send(JSON.stringify({
+            type: "auth",
+            data: { appId: CONFIG.WHEWS_APP_ID, appSecret: CONFIG.WHEWS_APP_SECRET }
+        }));
+    } catch (err) {
+        console.error('❌ 发送WHEWS auth请求失败：', err);
+    }
+}
+
+/**
+ * 发送WHEWS AccessToken续票请求（到期前60秒调用）
+ * @param {WebSocket} socket - 当前连接的WebSocket
+ */
+function whewsSendRefresh(socket) {
+    if (!whewsAccessToken) return;
+    if (!socket || socket.readyState !== 1) return;
+    console.log('🔄 正在续期WHEWS AccessToken...');
+    try {
+        socket.send(JSON.stringify({
+            type: "refresh",
+            data: { accessToken: whewsAccessToken }
+        }));
+    } catch (err) {
+        console.error('❌ 发送WHEWS refresh请求失败：', err);
+    }
+}
+
+/**
+ * 调度AccessToken续票（提前60秒）
+ * @param {WebSocket} socket - 当前连接的WebSocket
+ */
+function whewsScheduleRefresh(socket) {
+    clearTimeout(whewsRefreshTimer);
+    if (!whewsAccessExpireAt) return;
+    const refreshAt = whewsAccessExpireAt - 60000; // 提前60秒续票
+    const delay = Math.max(0, refreshAt - Date.now());
+    whewsRefreshTimer = setTimeout(() => {
+        whewsSendRefresh(socket);
+    }, delay);
+}
+
+/**
+ * 处理WHEWS控制帧（hello/auth_ok/auth_fail/error）
+ * @param {Object} msg - 解析后的控制帧消息
+ * @param {WebSocket} socket - 当前连接的WebSocket
+ */
+function handleWhewsControlFrame(msg, socket) {
+    switch (msg.type) {
+        case "hello": {
+            const needAuth = msg.data && (msg.data.needAuth === true || msg.data.needCeaAuth === true);
+            console.log(`👋 收到WHEWS hello${needAuth ? '（需要App鉴权解锁CEA）' : ''}`);
+            if (needAuth) {
+                whewsSendAuth(socket);
+            }
+            break;
+        }
+        case "auth_ok": {
+            whewsAccessToken = msg.data && msg.data.accessToken || null;
+            whewsAccessExpireAt = msg.data && msg.data.expireAt || 0;
+            whewsCeaAuthed = true;
+            console.log(`✅ WHEWS CEA鉴权成功${whewsAccessExpireAt ? `（${Math.round((whewsAccessExpireAt - Date.now()) / 1000)}秒后到期）` : ''}`);
+            whewsScheduleRefresh(socket);
+            break;
+        }
+        case "auth_fail": {
+            const code = msg.data && msg.data.code || "unknown";
+            const message = msg.data && msg.data.message || "";
+            whewsCeaAuthed = false;
+            console.warn(`⚠️ WHEWS CEA鉴权失败（${code}）：${message}，将无法接收地震预警，其它源不受影响`);
+            break;
+        }
+        case "error": {
+            console.warn(`⚠️ WHEWS错误帧：${msg.data && msg.data.message || JSON.stringify(msg)}`);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+/**
+ * 初始化WHEWS统一WebSocket连接
+ * 通过msg.source字段路由到不同处理器：
+ *   cea/cea-pr → handleWhewsCeaData
+ *   cenc       → handleWhewsCencData
+ *   tsunami    → handleWhewsTsunamiData
+ *   weatheralarm → handleWhewsWeatherData
+ */
+function initWhewsWss() {
+    if (whewsAuthFailed) {
+        console.error('❌ WHEWS鉴权失败，已停止重连');
+        return;
+    }
+    if (isConnectingWhewsWs) {
+        console.log('⚠️ WHEWS WebSocket正在连接中，跳过重复连接');
+        return;
+    }
+    if (whewsWebSocket && whewsWebSocket.readyState === 1) {
+        console.log('✅ WHEWS WebSocket已是活跃状态');
+        return;
+    }
+
+    isConnectingWhewsWs = true;
+    // 清理旧连接（不重置重连计数，计数在连接成功后由onOpen重置）
+    if (whewsWebSocket && whewsWebSocket.readyState !== 3) {
+        try { whewsWebSocket.close(1000, "重连清理"); } catch (err) {}
+        whewsWebSocket = null;
+    }
+    clearInterval(whewsPingTimer);
+    whewsPingTimer = null;
+
+    const baseUrl = CONFIG.WHEWS_WS_ALL;
+    if (!baseUrl) {
+        console.error('❌ WHEWS WS_ALL URL未配置');
+        isConnectingWhewsWs = false;
+        return;
+    }
+
+    const url = buildWhewsUrl(baseUrl);
+
+    whewsWebSocket = createWebSocket(url, {
+        onOpen: (socket) => {
+            isConnectingWhewsWs = false;
+            markDataSourceConnected('whews');
+            console.log('✅ WHEWS WebSocket连接成功（ws/all聚合端点）');
+            whewsReconnectCount = 0;
+
+            // 重置各类型的去重和初始状态缓存
+            whewsCeaSeenIds = {};
+            whewsCencSeenMd5 = {};
+            whewsTsunamiSeenIds = {};
+
+            // 重置App鉴权状态（AccessToken仅绑定当前连接，重连需重新auth）
+            clearTimeout(whewsRefreshTimer);
+            whewsRefreshTimer = null;
+            whewsAccessToken = null;
+            whewsAccessExpireAt = 0;
+            whewsCeaAuthed = false;
+
+            // 3秒窗口：窗口内数据为初始化批次
+            const initWindow = {};
+            initWindow._start = Date.now();
+            initWindow._done = false;
+            setTimeout(() => { initWindow._done = true; }, 3000);
+            // 将窗口引用存到各缓存对象上共用
+            whewsCeaSeenIds._initWindow = initWindow;
+            whewsCencSeenMd5._initWindow = initWindow;
+            whewsTsunamiSeenIds._initWindow = initWindow;
+
+            // 心跳保活
+            whewsPingTimer = setInterval(() => {
+                if (socket && socket.readyState === 1) {
+                    try { socket.send(JSON.stringify({ type: "ping" })); } catch (err) {
+                        console.error('发送WHEWS ping失败：', err);
+                        clearInterval(whewsPingTimer);
+                        if (socket && socket.readyState !== 3) socket.close();
+                    }
+                }
+            }, 30000);
+        },
+        onMessage: (e) => {
+            if (!e.data) return;
+            if (!e.data.startsWith("{") && !e.data.startsWith("[")) return;
+
+            try {
+                const parsed = JSON.parse(e.data);
+                
+                // ws/all 首连推送是数组 [{...},{...}]，后续是单个对象
+                const messages = Array.isArray(parsed) ? parsed : [parsed];
+                
+                for (const msg of messages) {
+                    if (msg.type === "heartbeat" || msg.type === "pong") continue;
+
+                    // 控制帧（hello/auth_ok/auth_fail/error）
+                    if (msg.type && !msg.Data) {
+                        handleWhewsControlFrame(msg, whewsWebSocket);
+                        continue;
+                    }
+
+                    if (!msg.Data) continue;
+
+                    // 根据source字段路由到对应处理器
+                    const source = msg.source || "";
+                    if (source === "cea" || source === "cea-pr") {
+                        handleWhewsCeaData(msg);
+                    } else if (source === "cenc") {
+                        handleWhewsCencData(msg);
+                    } else if (source === "tsunami") {
+                        handleWhewsTsunamiData(msg);
+                    } else if (source === "weatheralarm") {
+                        handleWhewsWeatherData(msg);
+                    }
+                }
+            } catch (err) {
+                console.error('❌ WHEWS数据解析失败：', err);
+            }
+        },
+        onClose: (event) => {
+            isConnectingWhewsWs = false;
+            console.log(`WHEWS WebSocket关闭：${event.code} - ${event.reason}`);
+
+            // 鉴权失败：停止重连并显示明确错误
+            if (event.code === 4401) {
+                whewsAuthFailed = true;
+                dataSourceStatus['whews'] = { connected: false, errorType: ERROR_TYPES.CONNECTION_REFUSED, errorMessage: 'WHEWS鉴权失败' };
+                clearInterval(whewsPingTimer);
+                whewsPingTimer = null;
+                clearTimeout(whewsRefreshTimer);
+                whewsRefreshTimer = null;
+                whewsWebSocket = null;
+                showDataSourceError('whews', ERROR_TYPES.CONNECTION_REFUSED, 'WHEWS鉴权失败，请检查WHEWS_TOKEN配置');
+                console.error('❌ WHEWS鉴权失败（4401），请检查WHEWS_TOKEN配置');
+                return;
+            }
+
+            // 非正常关闭：更新状态并立即显示错误
+            if (event.code !== 1000) {
+                const errType = classifyErrorByCode(event.code);
+                const errMsg = getErrorMessage(errType, 'WHEWS数据源');
+                updateDataSourceStatus('whews', event.code, whewsReconnectCount);
+                // 连接成功后断线时whewsReconnectCount已被onOpen重置为0，
+                // 这里绕过重连次数阈值，立即显示错误状态
+                showDataSourceError('whews', errType, errMsg);
+            }
+
+            clearInterval(whewsPingTimer);
+            whewsPingTimer = null;
+            clearTimeout(whewsRefreshTimer);
+            whewsRefreshTimer = null;
+            whewsWebSocket = null;
+        },
+        onError: () => {
+            isConnectingWhewsWs = false;
+        },
+        reconnectCallback: initWhewsWss,
+        reconnectCount: whewsReconnectCount++
+    });
+
+    // 台风数据独立于WHEWS WebSocket（走Fan Studio HTTP API），仅首次初始化一次
+    // 重连时不重复获取，后续由台风定时更新器每10分钟刷新
+    if (CONFIG.PAGE_ENABLED[5] && !isWhewsInited) {
+        setTimeout(async () => {
+            try {
+                console.log("🌀 正在获取台风数据（Fan Studio台风API）...");
+                const typhoonData = await fetchTyphoonData();
+                if (typhoonData === null) {
+                    console.log("⚠️ 台风接口请求失败，跳过初始化显示");
+                } else {
+                    // 台风API字段名与内部格式不同，先转换；空数组表示当前无台风
+                    const converted = convertTyphoonApiData(typhoonData) || [];
+                    parseTyphoonData(converted, "whews", true);
+                }
+                startTyphoonUpdateTimer();
+            } catch (err) {
+                console.error("初始化台风数据失败：", err);
+            }
+        }, 100);
+    }
+
+    isWhewsInited = true;
+    console.log("✅ WHEWS数据源初始化完成");
+}
+
+// ==================== WHEWS 数据处理 ====================
+
+/**
+ * 处理WHEWS CEA/CEA-PR预警数据
+ * 通过source字段区分国家级(cea)和省级(cea-pr)
+ */
+function handleWhewsCeaData(msg) {
+    const d = msg.Data;
+    if (!d || !d.id || !d.placeName || !d.magnitude) return;
+    
+    const source = msg.source || "cea"; // source在消息顶层，不在Data内
+    const md5 = msg.md5 || "";
+    
+    // 去重
+    const dedupKey = `${d.id}_${d.updates || 1}_${md5}`;
+    if (whewsCeaSeenIds[dedupKey]) return;
+    whewsCeaSeenIds[dedupKey] = true;
+    
+    // 连接后3秒内的数据都是初始化批次，不强制显示
+    const isInitial = !(whewsCeaSeenIds._initWindow && whewsCeaSeenIds._initWindow._done);
+    
+    console.log(`✅ 收到WHEWS CEA预警：${source} - ${d.placeName} ${d.magnitude}级 (第${d.updates || 1}报)`);
+    
+    // 适配为parseAlertData期望的格式
+    const adaptedData = {
+        id: d.id,
+        eventId: d.id,
+        placeName: d.placeName,
+        magnitude: d.magnitude,
+        shockTime: d.shockTime,
+        depth: d.depth,
+        epiIntensity: d.epiIntensity,
+        updates: d.updates || 1,
+        // source区分国家级/省级
+        source: source === "cea-pr" ? "cea-pr" : "cea",
+        // 省级源：province是发布预警的省级分中心，fallback到placeName提取
+        province: source === "cea-pr" ? (d.province || extractProvinceFromWhews(d.placeName)) : ""
+    };
+    
+    parseAlertData(adaptedData, adaptedData.source, isInitial);
+}
+
+/**
+ * 从WHEWS CENC情报数据中提取省份信息
+ */
+function extractProvinceFromWhews(placeName) {
+    if (!placeName) return "";
+    const provinces = ["北京","天津","上海","重庆","河北","山西","辽宁","吉林","黑龙江","江苏","浙江","安徽","福建","江西","山东","河南","湖北","湖南","广东","海南","四川","贵州","云南","陕西","甘肃","青海","台湾","内蒙古","广西","西藏","宁夏","新疆","香港","澳门"];
+    for (const p of provinces) {
+        if (placeName.indexOf(p) === 0 || placeName.indexOf(p) >= 0) return p;
+    }
+    return "";
+}
+
+/**
+ * 处理WHEWS CENC台网情报数据
+ */
+function handleWhewsCencData(msg) {
+    const d = msg.Data;
+    if (!d || !d.id || !d.placeName || !d.magnitude) return;
+    
+    const md5 = msg.md5 || "";
+    
+    // md5去重
+    if (md5 && whewsCencSeenMd5[md5]) return;
+    if (md5) whewsCencSeenMd5[md5] = true;
+    
+    // 连接后3秒内的数据都是初始化批次，不强制显示
+    const isInitial = !(whewsCencSeenMd5._initWindow && whewsCencSeenMd5._initWindow._done);
+    
+    console.log(`✅ 收到WHEWS CENC情报：${d.placeName} ${d.magnitude}级 (${d.infoTypeName || "测定"})`);
+    
+    // 适配为parseMeasureData期望的格式（cenc源）
+    const adaptedData = {
+        id: d.id,
+        placeName: d.placeName,
+        magnitude: d.magnitude,
+        shockTime: d.shockTime,
+        depth: d.depth,
+        infoTypeName: d.infoTypeName || "测定",
+        maxIntensity: d.maxIntensity || "",
+        latitude: d.latitude,
+        longitude: d.longitude,
+        updateTime: d.updateTime
+    };
+    
+    parseMeasureData(adaptedData, "cenc", isInitial);
+}
+
+/**
+ * 处理WHEWS海啸预警数据（NMEFC）
+ * 格式与 Fan Studio 海啸几乎一致，仅 level 在 warningInfo.level 而非嵌入 title
+ * 适配后复用 parseTsunamiData() 渲染
+ */
+function handleWhewsTsunamiData(msg) {
+    const d = msg.Data;
+    
+    // 连接后3秒内的数据都是初始化批次，不强制显示
+    const isInitial = !(whewsTsunamiSeenIds._initWindow && whewsTsunamiSeenIds._initWindow._done);
+    
+    // WHEWS格式适配：将 warningInfo.level 注入 title 以便 parseTsunamiData 提取级别
+    // level: 信息/解除/蓝色/黄色/橙色/红色
+    if (d && d.warningInfo && d.warningInfo.level) {
+        const level = d.warningInfo.level;
+        if (/红色|橙色|黄色|蓝色/.test(level)) {
+            d.warningInfo.title = level + d.warningInfo.title;
+        }
+    }
+    
+    parseTsunamiData(d, "whews", isInitial);
+}
+
+/**
+ * 处理WHEWS气象预警数据
+ * WHEWS气象预警格式可能包含：id, headline, description, effective, updateTime, level/severity
+ */
+function handleWhewsWeatherData(msg) {
+    const d = msg.Data;
+    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: PAGE_COLOR_MAP[4]};
+    
+    if (!d || !d.id || (!d.headline && !d.title && !d.description)) {
+        dom.weatherTag.style.backgroundColor = colorMap["默认"];
+        renderHistoryData(4, false, "暂无气象预警数据", "", colorMap["默认"]);
+        lastWeather = "";
+        return;
+    }
+    
+    const headline = d.headline || d.title || "";
+    const description = d.description || d.message || d.content || "";
+    const effective = d.effective || d.startTime || "";
+    const updateTime = d.updateTime || d.createTime || "";
+    
+    // 去重
+    const dedupKey = `${d.id}_${headline}_${updateTime}`;
+    if (dedupKey === lastWeather) return;
+    lastWeather = dedupKey;
+    
+    console.log(`✅ 收到WHEWS气象预警：${headline}`);
+    
+    // 颜色判断
+    let level = "默认";
+    const combined = headline + ((d.level || d.severity || ""));
+    if (/红色|I级|red/i.test(combined)) level = "红色";
+    else if (/橙色|II级|orange/i.test(combined)) level = "橙色";
+    else if (/黄色|III级|yellow/i.test(combined)) level = "黄色";
+    else if (/蓝色|IV级|blue/i.test(combined)) level = "蓝色";
+    
+    const targetColor = colorMap[level];
+    dom.weatherTag.style.backgroundColor = targetColor;
+    
+    const line1 = `${headline}${effective ? `（生效时间：${effective}）` : ""}`;
+    const line2 = description || "请做好相关防范措施";
+    
+    CONFIG.WEATHER_FORCED ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
+    if (currentPage === 4) startPageLogic();
+}
+
 // 验证烈度速报数据的完整性
 function validateIntensityData(data) {
     return data?.eq_id && data?.happen_time && data?.magnitude !== undefined && data?.maxintensity !== undefined;
@@ -1733,8 +2035,7 @@ function extractIntensityInfo(data) {
         depth: (data.depth !== undefined && data.depth !== null) ? data.depth : "未知",
         maxInt: data.maxintensity !== undefined ? data.maxintensity : 0, // 计测烈度
         estimatedInt: data.estimated_intensity !== undefined ? data.estimated_intensity : 0, // 推测烈度
-        maxForecastInt: data.maxforecastintensity !== undefined ? data.maxforecastintensity : 0,
-        source: data.source || "nowquake" // 数据来源：fanstudio 或 nowquake
+        maxForecastInt: data.maxforecastintensity !== undefined ? data.maxforecastintensity : 0
     };
 }
 
@@ -1816,72 +2117,6 @@ function setCSSVariables() {
 // 初始化时设置CSS变量
 setCSSVariables();
 
-/**
- * 从烈度信息文本中解析推测最高烈度
- * @param {string} infoText - 烈度信息文本
- * @returns {number} - 推测最高烈度值
- */
-function parseEstimatedIntensityFromText(infoText) {
-    if (!infoText || typeof infoText !== 'string') return 0;
-    const match = infoText.match(/最高烈度为(\d+(?:\.\d+)?)度/);
-    return match ? parseFloat(match[1]) : 0;
-}
-
-/**
- * 将Fan Studio数据格式转换为NowQuake格式
- * @param {Object} fanData - Fan Studio原始数据
- * @returns {Object} - 转换后的NowQuake格式数据
- */
-function convertFanStudioToNowQuake(fanData) {
-    if (!fanData) return null;
-    
-    const data = fanData.Data || fanData;
-    
-    const converted = {
-        eq_id: data.uniEventId || String(data.id),
-        happen_time: data.oriTime || "",
-        update_time: data.gmtCreate || "",
-        hypocenter: data.locName || "未知震中",
-        magnitude: parseFloat(data.magnitude) || 0,
-        depth: parseFloat(data.focDepth) || 0,
-        maxintensity: 0, // 计测烈度（从台站数据提取）
-        estimated_intensity: parseEstimatedIntensityFromText(data.intensity_info_text), // 推测烈度
-        maxforecastintensity: 0,
-        info: data.intensity_info_text || "",
-        stations: [],
-        source: "fanstudio" // 数据来源标记
-    };
-    
-    if (Array.isArray(data.instrument_intensity_json) && data.instrument_intensity_json.length > 0) {
-        converted.stations = data.instrument_intensity_json.map(st => ({
-            name: st.stName || st.stID || "未知站",
-            int: st.INT || 0,
-            distance: st.Dist || 0,
-            forecast_int: st.estimateInt || 0,
-            pga: st.PGA || 0,
-            pgv: st.PGV || 0,
-            location_name: {
-                province: st.Province || "",
-                city: st.City || "",
-                county: st.County || "",
-                town: st.Town || ""
-            }
-        }));
-        
-        // 从台站数据中提取最大计测烈度
-        const maxIntStation = converted.stations.reduce((max, st) => 
-            st.int > max.int ? st : max, {int: 0});
-        converted.maxintensity = maxIntStation.int;
-        
-        // 从台站数据中提取最大预测烈度（Fan Studio特有）
-        const maxForecastStation = converted.stations.reduce((max, st) => 
-            st.forecast_int > max.forecast_int ? st : max, {forecast_int: 0});
-        converted.maxforecastintensity = maxForecastStation.forecast_int;
-    }
-    
-    return converted;
-}
-
 // ====================== 最终优化的 parseIntensityData 函数（仅改此处！） ======================
 function parseIntensityData(data, isInitial = false) {
     if (!validateIntensityData(data)) return;
@@ -1917,12 +2152,10 @@ function parseIntensityData(data, isInitial = false) {
         intensityText = `推测最高烈度<span class="highlight-num">${intensityInfo.estimatedInt.toFixed(1)}</span>度`;
     }
     
-    // 预测/推测烈度显示（根据数据来源区分）
+    // 预测/推测烈度显示
     if (intensityInfo.maxForecastInt > 0) {
         if (intensityText) intensityText += "，";
-        // NowQuake显示"推测最大烈度"，Fan Studio显示"最大仪器预测烈度"
-        const forecastLabel = intensityInfo.source === "fanstudio" ? "最大仪器预测烈度" : "推测最大烈度";
-        intensityText += `${forecastLabel}<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度`;
+        intensityText += `推测最大烈度<span class="highlight-num">${intensityInfo.maxForecastInt.toFixed(1)}</span>度`;
     }
 
     // 最终文本合并成一行在第二行显示
@@ -2042,51 +2275,6 @@ function parseTsunamiData(data, source, isInitial = false) {
         console.log(`⚡ 实时数据，使用renderRealTimeData`);
         renderRealTimeData(3, true, line1, line2, targetColor);
     }
-}
-
-/**
- * 解析气象预警数据
- * @param {Object} data - 气象预警数据对象
- */
-function parseWeatherData(data, source, isInitial = false) {
-    const colorMap = {红色: "#FF0000", 橙色: "#FF7F50", 黄色: "#FFFF00", 蓝色: "#1E90FF", 默认: PAGE_COLOR_MAP[4]};
-    if (!data?.id || !data?.headline || !data?.description) {
-        dom.weatherTag.style.backgroundColor = colorMap["默认"];
-        renderHistoryData(4, false, "暂无气象预警数据", "", colorMap["默认"]);
-        lastWeather = "";
-        return;
-    }
-
-    console.log(`✅ 收到气象预警数据：${data.headline}`);
-
-    const uniqueId = `${data.id}_${data.headline}_${data.description}_${data.effective || ""}_${data.updateTime || Date.now()}`;
-    if (uniqueId === lastWeather) return;
-    lastWeather = uniqueId;
-    
-    // 颜色判断：优先匹配中文颜色，其次匹配罗马数字等级（I级=红色, II级=橙色, III级=黄色, IV级=蓝色）
-    let level = "默认";
-    if (data.headline.includes("红色") || data.headline.includes("I级")) {
-        level = "红色";
-    } else if (data.headline.includes("橙色") || data.headline.includes("II级")) {
-        level = "橙色";
-    } else if (data.headline.includes("黄色") || data.headline.includes("III级")) {
-        level = "黄色";
-    } else if (data.headline.includes("蓝色") || data.headline.includes("IV级")) {
-        level = "蓝色";
-    }
-    
-    const targetColor = colorMap[level];
-    dom.weatherTag.style.backgroundColor = targetColor;
-    const line1 = `${data.headline}（生效时间：${data.effective || "未知时间"}）`;
-    const line2 = data.description || "请做好相关防范措施";
-
-    // 根据是否是初始化数据决定使用哪个渲染函数
-    if (isInitial) {
-        renderHistoryData(4, true, line1, line2, targetColor);
-    } else {
-        CONFIG.WEATHER_FORCED ? renderRealTimeData(4, true, line1, line2, targetColor) : renderHistoryData(4, true, line1, line2, targetColor);
-    }
-    if (currentPage === 4) startPageLogic();
 }
 
 /**
@@ -2434,151 +2622,6 @@ function createWebSocket(url, options) {
     }
 }
 
-function initWebSocket(){
-    if (isConnectingMainWs) {
-        console.log('⚠️ 主WebSocket正在连接中，跳过重复连接');
-        return;
-    }
-    
-    // 检查是否已有活跃的WebSocket连接
-    if (webSocket && webSocket.readyState === 1) {
-        console.log('✅ 主WebSocket已是活跃状态，跳过重新初始化');
-        return;
-    }
-    
-    isConnectingMainWs = true;
-    clearInterval(pingTimer);
-    if(webSocket&&webSocket.readyState!==3){
-        try{
-            webSocket.close(1000,"重连清理");
-        }catch(err){
-            console.error("WebSocket关闭失败：",err);
-        }
-        webSocket=null;
-    }
-    
-    isInited = false;
-    
-    webSocket = createWebSocket(CONFIG.WS_ALL, {
-        onOpen: (socket) => {
-            isConnectingMainWs = false; // 释放连接锁
-            markDataSourceConnected('main'); // 标记主数据源已连接
-            reconnectCount = 0;
-            parseMeasureData.source = "cenc";
-            measureDataCache = {};
-            alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
-            lastMeasure = "";
-            
-            // 连接成功后重置页面显示
-            resetPagesToDefault();
-            
-            setTimeout(() => {
-                if (socket && socket.readyState === 1) {
-                    try {
-                        socket.send("query");
-                        console.log("已发送查询请求");
-                    } catch (err) {
-                        console.error("发送查询请求失败：", err);
-                    }
-                }
-            }, 50);
-            
-            pingTimer = setInterval(() => {
-                if (socket && socket.readyState === 1) {
-                    try {
-                        socket.send("ping");
-                    } catch (err) {
-                        console.error("发送ping失败：", err);
-                        clearInterval(pingTimer);
-                        if (socket && socket.readyState !== 3) socket.close();
-                    }
-                }
-            }, 5000);
-        },
-        onMessage: (e) => {
-            if (!e.data || !e.data.startsWith("{")) return;
-            try {
-                const res = JSON.parse(e.data);
-                if (res.type === "initial_all") {
-                    const initParseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, typhoon: parseTyphoonData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
-                    for (const [source, handler] of Object.entries(initParseMap)) {
-                        if (res[source] && res[source].Data) {
-                            try {
-                                parseMeasureData.source = source;
-                                // 为初始化数据添加一个标识，确保不会强制显示
-                                handler(res[source].Data, source, true);
-                            } catch (err) {
-                                console.error(`处理${source}数据失败：`, err);
-                            }
-                        }
-                    }
-                    // 初始化完成后，尝试从缓存中获取最新的台网测定数据
-                    setTimeout(() => {
-                        const latestData = handleMeasureCache();
-                        if (latestData) {
-                            renderMeasureLatest(latestData, true);
-                        }
-                    }, 100);
-                    isInited = true;
-                    console.log("✅ 初始数据加载完成");
-                    return;
-                }
-                if (res.type === "update" && res.source && res.Data) {
-                    const parseMap = {"cea-pr": parseAlertData, "cea": parseAlertData, cenc: parseMeasureData, tsunami: parseTsunamiData, weatheralarm: parseWeatherData, typhoon: parseTyphoonData, ningxia: parseMeasureData, guangxi: parseMeasureData, shanxi: parseMeasureData, beijing: parseMeasureData, shandong: parseMeasureData, yunnan: parseMeasureData};
-                    if (["cenc", "ningxia", "guangxi", "shanxi", "beijing", "shandong", "yunnan"].includes(res.source)) parseMeasureData.source = res.source;
-                    try {
-                        // 处理更新数据，会强制显示
-                        parseMap[res.source] && parseMap[res.source](res.Data, res.source, false);
-                    } catch (err) {
-                        console.error(`处理${res.source}更新数据失败：`, err);
-                    }
-                }
-            } catch (err) {
-                console.error("❌ 数据解析失败：", err, "原始数据：", e.data);
-            }
-        },
-        onClose: (event) => {
-            isConnectingMainWs = false; // 释放连接锁
-            // 更新主数据源状态（如果event存在且不是正常关闭）
-            if (event && event.code !== 1000) {
-                updateDataSourceStatus('main', event.code, reconnectCount);
-            }
-            clearInterval(pingTimer);
-            webSocket = null;
-        },
-        onFailed: () => {
-            isConnectingMainWs = false; // 释放连接锁
-            console.log('❌ 主WebSocket连接失败，停止重连');
-            if (!CONFIG.SHOW_NETWORK_STATUS) return;
-
-            // 重置所有页面颜色为默认值
-            resetAllPageColorsToDefault();
-
-            if (CONFIG.PAGE_ENABLED[0]) {
-                renderHistoryData(0, false, "数据源连接失败");
-            }
-            if (CONFIG.PAGE_ENABLED[1]) {
-                renderHistoryData(1, false, "数据源连接失败");
-            }
-            if (CONFIG.PAGE_ENABLED[3]) {
-                renderHistoryData(3, false, "数据源连接失败", "", PAGE_COLOR_MAP[3]);
-            }
-            if (CONFIG.PAGE_ENABLED[4]) {
-                renderHistoryData(4, false, "数据源连接失败", "", PAGE_COLOR_MAP[4]);
-            }
-            if (CONFIG.PAGE_ENABLED[5]) {
-                renderHistoryData(5, false, "数据源连接失败", "", PAGE_COLOR_MAP[5]);
-            }
-        },
-        onError: (error) => {
-            isConnectingMainWs = false; // 释放连接锁
-            console.error('❌ 主WebSocket连接错误', error);
-        },
-        reconnectCallback: initWebSocket,
-        reconnectCount: reconnectCount++
-    });
-}
-
 function clearTimer(){
     if(timer){clearTimeout(timer);timer=null}
 }
@@ -2716,14 +2759,11 @@ function handleOnlineEvent() {
     // 隐藏网络断开状态
     hideNetworkDisconnectedStatus();
     
-    // 重置数据源失败状态（网络恢复后重新尝试）
+    // 重置烈度速报失败状态（网络恢复后重新尝试）
     if (intensitySourceStopped) {
-        console.log('✅ 网络恢复，重置数据源状态');
-        nowQuakeFailed = false;
-        fanStudioFailed = false;
+        console.log('✅ 网络恢复，重置烈度速报数据源状态');
         intensitySourceStopped = false;
         intensityReconnectCount = 0;
-        fanStudioReconnectCount = 0;
     }
     
     // 网络恢复时立即重置页面显示
@@ -2732,37 +2772,10 @@ function handleOnlineEvent() {
         resetIntensityPageToDefault();
     }
     
-    // 网络恢复时，尝试重连WebSocket
-    if (!webSocket || webSocket.readyState === 3) {
-        console.log('正在重连主WebSocket...');
-        initWebSocket();
-    }
-    
-    // 根据配置重连烈度速报数据源
-    const source = CONFIG.INTENSITY_SOURCE || "auto";
-    if (source === "auto") {
-        // auto模式：根据NowQuake是否失败决定重连哪个
-        if (nowQuakeFailed) {
-            if (!fanStudioWebSocket || fanStudioWebSocket.readyState === 3) {
-                console.log('正在重连Fan Studio烈度速报WebSocket...');
-                initFanStudioWss();
-            }
-        } else {
-            if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
-                console.log('正在重连NowQuake烈度速报WebSocket...');
-                initIntensityWss();
-            }
-        }
-    } else if (source === "nowquake") {
-        if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
-            console.log('正在重连NowQuake烈度速报WebSocket...');
-            initIntensityWss();
-        }
-    } else if (source === "fanstudio") {
-        if (!fanStudioWebSocket || fanStudioWebSocket.readyState === 3) {
-            console.log('正在重连Fan Studio烈度速报WebSocket...');
-            initFanStudioWss();
-        }
+    // 重连烈度速报数据源（NowQuake），主数据源由各WebSocket自身的重连机制处理
+    if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
+        console.log('正在重连NowQuake烈度速报WebSocket...');
+        initIntensityWss();
     }
 }
 
@@ -2863,6 +2876,10 @@ function classifyErrorByCode(code) {
             return ERROR_TYPES.SERVER_ERROR;
         case 1015:
             return ERROR_TYPES.NETWORK; // TLS握手失败，通常是网络问题
+        case 4401:
+            return ERROR_TYPES.CONNECTION_REFUSED; // WHEWS令牌无效
+        case 4503:
+            return ERROR_TYPES.SERVER_UNAVAILABLE; // WHEWS鉴权服务临时不可用，稍后自动重连
         default:
             // 未知的关闭码也归类为网络问题（保守策略）
             return ERROR_TYPES.NETWORK;
@@ -2898,7 +2915,7 @@ function getErrorMessage(errorType, dataSourceName) {
 
 /**
  * 更新数据源状态并显示相应的错误信息
- * @param {string} source - 数据源标识 ('main', 'intensity', 'fanStudio')
+ * @param {string} source - 数据源标识 ('intensity', 'wolfx', 'whews')
  * @param {number} closeCode - WebSocket关闭码
  * @param {number} reconnectCount - 当前重连次数
  */
@@ -2908,14 +2925,14 @@ function updateDataSourceStatus(source, closeCode, reconnectCount) {
     // 获取数据源显示名称
     let dataSourceName = '';
     switch (source) {
-        case 'main':
-            dataSourceName = '主数据源';
-            break;
         case 'intensity':
             dataSourceName = 'NowQuake烈度速报';
             break;
-        case 'fanStudio':
-            dataSourceName = 'Fan Studio烈度速报';
+        case 'wolfx':
+            dataSourceName = 'Wolfx数据源';
+            break;
+        case 'whews':
+            dataSourceName = 'WHEWS数据源';
             break;
         default:
             dataSourceName = '数据源';
@@ -2979,30 +2996,30 @@ function showDataSourceError(source, errorType, message) {
     
     // 根据数据源在对应页面显示错误
     switch (source) {
-        case 'main':
-            // 主数据源影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)、台风信息(5)
+        case 'intensity':
+            // 烈度速报数据源影响：烈度速报页面(2)
+            if (CONFIG.PAGE_ENABLED[2] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                renderHistoryData(2, false, message);
+            }
+            break;
+            
+        case 'wolfx':
+            // Wolfx数据源影响：地震预警(0)、台网测定(1)
             if (CONFIG.PAGE_ENABLED[0] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
                 renderHistoryData(0, false, message);
             }
             if (CONFIG.PAGE_ENABLED[1] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
                 renderHistoryData(1, false, message);
             }
-            if (CONFIG.PAGE_ENABLED[3] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
-                renderHistoryData(3, false, message, "", PAGE_COLOR_MAP[3]);
-            }
-            if (CONFIG.PAGE_ENABLED[4] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
-                renderHistoryData(4, false, message, "", PAGE_COLOR_MAP[4]);
-            }
-            if (CONFIG.PAGE_ENABLED[5] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
-                renderHistoryData(5, false, message, "", PAGE_COLOR_MAP[5]);
-            }
             break;
             
-        case 'intensity':
-        case 'fanStudio':
-            // 烈度速报数据源影响：烈度速报页面(2)
-            if (CONFIG.PAGE_ENABLED[2] && errorType !== ERROR_TYPES.NORMAL_CLOSE) {
-                renderHistoryData(2, false, message);
+        case 'whews':
+            // WHEWS聚合端点影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)
+            if (errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                if (CONFIG.PAGE_ENABLED[0]) renderHistoryData(0, false, message);
+                if (CONFIG.PAGE_ENABLED[1]) renderHistoryData(1, false, message);
+                if (CONFIG.PAGE_ENABLED[3]) renderHistoryData(3, false, message, "", PAGE_COLOR_MAP[3]);
+                if (CONFIG.PAGE_ENABLED[4]) renderHistoryData(4, false, message, "", PAGE_COLOR_MAP[4]);
             }
             break;
     }
@@ -3075,26 +3092,28 @@ function startNetworkMonitor() {
 }
 
 window.onbeforeunload=()=>{
-    clearInterval(pingTimer);
     clearAllTimer();
     if(memoryCleanupTimer)clearInterval(memoryCleanupTimer);
     if(intensityExpiryCheckTimer)clearInterval(intensityExpiryCheckTimer);
     if(tsunamiExpiryCheckTimer)clearInterval(tsunamiExpiryCheckTimer);
     if(typhoonExpiryCheckTimer)clearInterval(typhoonExpiryCheckTimer);
     stopTyphoonUpdateTimer(); // 清理台风数据定时更新
-    if(webSocket&&webSocket.readyState!==3)webSocket.close(1000,"页面关闭");
     measureDataCache={};
-    alertStore = { lastEventId: "", lastSource: "", lastTime: 0 };
+    alertStore = { lastShockTime: "", lastSource: "", lastTime: 0 };
     clearInterval(intensityPingTimer);
     closeIntWss();
-    clearInterval(fanStudioPingTimer);
-    closeFanStudioWss();
     intensityHttpRetryCount=0;
     intensityReconnectCount=0;
-    fanStudioReconnectCount=0;
-    nowQuakeFailed=false;
-    fanStudioFailed=false;
     intensitySourceStopped=false;
+
+    // 清理Wolfx数据源
+    closeWolfxWss();
+    wolfxReconnectCount=0;
+    wolfxSeenTypes={};
+    isWolfxInited=false;
+
+    // 清理WHEWS数据源
+    closeAllWhewsWss();
 
     // 清理网络状态监听器
     window.removeEventListener('online', handleOnlineEvent);

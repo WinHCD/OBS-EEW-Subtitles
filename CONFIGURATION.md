@@ -10,20 +10,18 @@
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
-| `DATA_SOURCE` | 主数据源选择 | `"wolfx"` | `"fanstudio"`: 使用Fan Studio数据源；`"wolfx"`: 使用Wolfx数据源 |
-| `WS_ALL` | Fan Studio WebSocket 连接地址 | `wss://ws.fanstudio.tech/all` | Fan Studio 数据源地址 |
+| `DATA_SOURCE` | 主数据源选择 | `"wolfx"` | `"wolfx"`: 使用Wolfx数据源；`"whews"`: 使用WHEWS数据源 |
 | `WOLFX_WS_ALL` | Wolfx WebSocket 连接地址 | `wss://ws-api.wolfx.jp/all_eew` | Wolfx 数据源地址 |
-| `TYPHOON_API` | 台风预警API地址 | `https://api.fanstudio.tech/we/typhoon.php` | 台风数据获取地址（仅在使用Wolfx 数据源时启用） |
+| `TYPHOON_API` | 台风实况API地址 | `https://api.fanstudio.tech/we/typhoon.php` | 台风信息页数据来源（Fan Studio台风接口，与主数据源无关） |
 
 ### 2. 烈度速报配置
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
-| `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | `"auto"`: 优先NowQuake，失败自动切换Fan Studio；`"nowquake"`: 仅NowQuake；`"fanstudio"`: 仅Fan Studio；`"both"`: 同时使用两个数据源 |
+| `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | 烈度速报仅支持 NowQuake，`"auto"` 与 `"nowquake"` 行为一致 |
 | `INT_HTTP_LASTID` | NowQuake烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 仅 NowQuake 使用 |
 | `INT_HTTP_EVENT` | NowQuake烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 仅 NowQuake 使用 |
 | `INT_WSS_REAL` | NowQuake烈度速报 WebSocket 接口 - 实时数据 | `wss://api-cencint-public.nowquake.cn/websocket` | 用于获取烈度速报的实时数据 |
-| `INT_WSS_FANSTUDIO` | Fan Studio烈度速报 WebSocket 接口 | `wss://ws.fanstudio.tech/cenc-ir` | Fan Studio 烈度速报数据源 |
 
 ### 3. 显示参数配置
 
@@ -110,9 +108,10 @@
 ### 数据源配置
 - 不同数据源提供的数据范围有所不同，请根据实际需求选择
 - 修改数据源地址时，请确保新的地址提供与原地址相同格式的数据，否则可能导致数据解析失败
-- `INTENSITY_SOURCE` 设置为 `"auto"` 时，系统会优先尝试 NowQuake 数据源，连接失败后自动切换到 Fan Studio 数据源
-- 当两个数据源都无法连接时，系统将停止重连并显示"暂无烈度速报数据"
+- 烈度速报仅支持 NowQuake 数据源（`INTENSITY_SOURCE` 的 `"auto"` 与 `"nowquake"` 行为一致）
+- NowQuake 数据源无法连接时，系统将停止重连并显示相应提示
 - `MAX_WS_RECONNECT` 设置为 `0` 时，WebSocket 连接将无限重连；设置为大于 0 的值时，达到该次数后停止重连
+- 台风信息页（台风实况）数据来自 Fan Studio 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关
 
 ### 显示参数
 - `SCROLL_SPEED` 过高可能导致文本滚动过快，影响阅读
@@ -141,7 +140,6 @@
 const CONFIG = {
     // 数据源配置
     DATA_SOURCE: "wolfx",
-    WS_ALL: "wss://ws.fanstudio.tech/all",
     WOLFX_WS_ALL: "wss://ws-api.wolfx.jp/all_eew",
     TYPHOON_API: "https://api.fanstudio.tech/we/typhoon.php",
 
@@ -150,7 +148,6 @@ const CONFIG = {
     INT_HTTP_LASTID: "https://api-cencint-public.nowquake.cn/lastid",
     INT_HTTP_EVENT: "https://api-cencint-public.nowquake.cn/event/",
     INT_WSS_REAL: "wss://api-cencint-public.nowquake.cn/websocket",
-    INT_WSS_FANSTUDIO: "wss://ws.fanstudio.tech/cenc-ir",
 
     // 显示参数配置
     SCROLL_SPEED: 120,
