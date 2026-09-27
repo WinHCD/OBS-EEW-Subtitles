@@ -28,11 +28,8 @@ let networkStatusDisplayed=false; // 网络状态是否已显示标记
 // WHEWS数据源变量
 let whewsWebSocket=null,whewsPingTimer=null,whewsReconnectCount=0;
 let isConnectingWhewsWs=false;
-let whewsAuthFailed=false; // 鉴权失败标记（4401时置true，停止重连）
-let whewsAccessToken=null; // CEA App鉴权AccessToken
-let whewsAccessExpireAt=0; // AccessToken过期时间戳
-let whewsRefreshTimer=null; // AccessToken续票定时器
-let whewsCeaAuthed=false; // CEA是否已鉴权解锁
+let whewsAuthFailed=false; // 停止重连标记（4401令牌无效/4403被封禁时置true）
+let whewsConnectedAt=0; // 本次连接建立时间（判断连接是否稳定，决定退避计数是否清零）
 let whewsCeaSeenIds={}; // CEA预警去重缓存
 let whewsCencSeenMd5={}; // CENC情报去重缓存
 let whewsTsunamiSeenIds={}; // 海啸预警去重缓存
@@ -1292,6 +1289,12 @@ function initIntensityWss() {
         reconnectCallback: initIntensityWss,
         reconnectCount: intensityReconnectCount  // 使用当前值，不在此处递增
     });
+
+    // createWebSocket 可能因网络离线或构造异常提前返回 null（不触发任何回调），
+    // 此时必须释放连接锁，否则后续重连会被 isConnectingIntensityWs 卡死而永久不重连
+    if (!intensityWebSocket) {
+        isConnectingIntensityWs = false;
+    }
 }
 
 /**
@@ -1530,6 +1533,12 @@ function initWolfxWss() {
         reconnectCallback: initWolfxWss,
         reconnectCount: wolfxReconnectCount
     });
+
+    // createWebSocket 可能因网络离线或构造异常提前返回 null（不触发任何回调），
+    // 此时必须释放连接锁，否则后续重连会被 isConnectingWolfxWs 卡死而永久不重连
+    if (!wolfxWebSocket) {
+        isConnectingWolfxWs = false;
+    }
 }
 
 // ==================== WHEWS API 支持 ====================
@@ -1556,13 +1565,9 @@ function closeAllWhewsWss() {
     }
     clearInterval(whewsPingTimer);
     whewsPingTimer = null;
-    clearTimeout(whewsRefreshTimer);
-    whewsRefreshTimer = null;
     whewsReconnectCount = 0;
     whewsAuthFailed = false;
-    whewsAccessToken = null;
-    whewsAccessExpireAt = 0;
-    whewsCeaAuthed = false;
+    whewsConnectedAt = 0;
     whewsCeaSeenIds = {};
     whewsCencSeenMd5 = {};
     whewsTsunamiSeenIds = {};
@@ -1570,86 +1575,14 @@ function closeAllWhewsWss() {
 }
 
 /**
- * 发送WHEWS App鉴权请求（解锁CEA/CEA-PR地震预警）
- * @param {WebSocket} socket - 当前连接的WebSocket
- */
-function whewsSendAuth(socket) {
-    if (!CONFIG.WHEWS_APP_ID || !CONFIG.WHEWS_APP_SECRET) {
-        console.warn('⚠️ 未配置WHEWS_APP_ID/WHEWS_APP_SECRET，跳过CEA鉴权，仅接收非CEA源');
-        return;
-    }
-    if (!socket || socket.readyState !== 1) return;
-    console.log('🔑 正在发送WHEWS App鉴权请求...');
-    try {
-        socket.send(JSON.stringify({
-            type: "auth",
-            data: { appId: CONFIG.WHEWS_APP_ID, appSecret: CONFIG.WHEWS_APP_SECRET }
-        }));
-    } catch (err) {
-        console.error('❌ 发送WHEWS auth请求失败：', err);
-    }
-}
-
-/**
- * 发送WHEWS AccessToken续票请求（到期前60秒调用）
- * @param {WebSocket} socket - 当前连接的WebSocket
- */
-function whewsSendRefresh(socket) {
-    if (!whewsAccessToken) return;
-    if (!socket || socket.readyState !== 1) return;
-    console.log('🔄 正在续期WHEWS AccessToken...');
-    try {
-        socket.send(JSON.stringify({
-            type: "refresh",
-            data: { accessToken: whewsAccessToken }
-        }));
-    } catch (err) {
-        console.error('❌ 发送WHEWS refresh请求失败：', err);
-    }
-}
-
-/**
- * 调度AccessToken续票（提前60秒）
- * @param {WebSocket} socket - 当前连接的WebSocket
- */
-function whewsScheduleRefresh(socket) {
-    clearTimeout(whewsRefreshTimer);
-    if (!whewsAccessExpireAt) return;
-    const refreshAt = whewsAccessExpireAt - 60000; // 提前60秒续票
-    const delay = Math.max(0, refreshAt - Date.now());
-    whewsRefreshTimer = setTimeout(() => {
-        whewsSendRefresh(socket);
-    }, delay);
-}
-
-/**
- * 处理WHEWS控制帧（hello/auth_ok/auth_fail/error）
+ * 处理WHEWS控制帧（hello/error）
+ * CEA App二次鉴权已取消，连接仅需URL上的WAuth令牌，无需再发送auth帧
  * @param {Object} msg - 解析后的控制帧消息
- * @param {WebSocket} socket - 当前连接的WebSocket
  */
-function handleWhewsControlFrame(msg, socket) {
+function handleWhewsControlFrame(msg) {
     switch (msg.type) {
         case "hello": {
-            const needAuth = msg.data && (msg.data.needAuth === true || msg.data.needCeaAuth === true);
-            console.log(`👋 收到WHEWS hello${needAuth ? '（需要App鉴权解锁CEA）' : ''}`);
-            if (needAuth) {
-                whewsSendAuth(socket);
-            }
-            break;
-        }
-        case "auth_ok": {
-            whewsAccessToken = msg.data && msg.data.accessToken || null;
-            whewsAccessExpireAt = msg.data && msg.data.expireAt || 0;
-            whewsCeaAuthed = true;
-            console.log(`✅ WHEWS CEA鉴权成功${whewsAccessExpireAt ? `（${Math.round((whewsAccessExpireAt - Date.now()) / 1000)}秒后到期）` : ''}`);
-            whewsScheduleRefresh(socket);
-            break;
-        }
-        case "auth_fail": {
-            const code = msg.data && msg.data.code || "unknown";
-            const message = msg.data && msg.data.message || "";
-            whewsCeaAuthed = false;
-            console.warn(`⚠️ WHEWS CEA鉴权失败（${code}）：${message}，将无法接收地震预警，其它源不受影响`);
+            console.log('👋 收到WHEWS hello');
             break;
         }
         case "error": {
@@ -1671,7 +1604,7 @@ function handleWhewsControlFrame(msg, socket) {
  */
 function initWhewsWss() {
     if (whewsAuthFailed) {
-        console.error('❌ WHEWS鉴权失败，已停止重连');
+        console.error('❌ WHEWS令牌无效或连接被封禁，已停止重连');
         return;
     }
     if (isConnectingWhewsWs) {
@@ -1706,19 +1639,14 @@ function initWhewsWss() {
             isConnectingWhewsWs = false;
             markDataSourceConnected('whews');
             console.log('✅ WHEWS WebSocket连接成功（ws/all聚合端点）');
-            whewsReconnectCount = 0;
+            // 记录连接建立时间。退避计数不在此清零：仅在连接稳定存活60秒后才清零（见onClose），
+            // 否则服务端"连上即断开"时每次重连都从3秒重新开始，会因高频重连触发服务端封禁
+            whewsConnectedAt = Date.now();
 
             // 重置各类型的去重和初始状态缓存
             whewsCeaSeenIds = {};
             whewsCencSeenMd5 = {};
             whewsTsunamiSeenIds = {};
-
-            // 重置App鉴权状态（AccessToken仅绑定当前连接，重连需重新auth）
-            clearTimeout(whewsRefreshTimer);
-            whewsRefreshTimer = null;
-            whewsAccessToken = null;
-            whewsAccessExpireAt = 0;
-            whewsCeaAuthed = false;
 
             // 3秒窗口：窗口内数据为初始化批次
             const initWindow = {};
@@ -1754,9 +1682,9 @@ function initWhewsWss() {
                 for (const msg of messages) {
                     if (msg.type === "heartbeat" || msg.type === "pong") continue;
 
-                    // 控制帧（hello/auth_ok/auth_fail/error）
+                    // 控制帧（hello/error）
                     if (msg.type && !msg.Data) {
-                        handleWhewsControlFrame(msg, whewsWebSocket);
+                        handleWhewsControlFrame(msg);
                         continue;
                     }
 
@@ -1782,17 +1710,25 @@ function initWhewsWss() {
             isConnectingWhewsWs = false;
             console.log(`WHEWS WebSocket关闭：${event.code} - ${event.reason}`);
 
-            // 鉴权失败：停止重连并显示明确错误
-            if (event.code === 4401) {
+            // 连接稳定存活超过60秒才清零退避计数；若连上后很快被断开，保留计数使重连按指数退避增长
+            if (whewsConnectedAt && Date.now() - whewsConnectedAt >= 60000) {
+                whewsReconnectCount = 0;
+            }
+            whewsConnectedAt = 0;
+
+            // 令牌无效（4401）/ 被封禁（4403）：停止重连并显示明确错误
+            if (event.code === 4401 || event.code === 4403) {
+                const isBanned = event.code === 4403;
+                const message = isBanned
+                    ? 'WHEWS连接被封禁，请等待解封或联系管理员'
+                    : 'WHEWS鉴权失败，请检查WHEWS_TOKEN配置';
                 whewsAuthFailed = true;
-                dataSourceStatus['whews'] = { connected: false, errorType: ERROR_TYPES.CONNECTION_REFUSED, errorMessage: 'WHEWS鉴权失败' };
+                dataSourceStatus['whews'] = { connected: false, errorType: ERROR_TYPES.CONNECTION_REFUSED, errorMessage: message };
                 clearInterval(whewsPingTimer);
                 whewsPingTimer = null;
-                clearTimeout(whewsRefreshTimer);
-                whewsRefreshTimer = null;
                 whewsWebSocket = null;
-                showDataSourceError('whews', ERROR_TYPES.CONNECTION_REFUSED, 'WHEWS鉴权失败，请检查WHEWS_TOKEN配置');
-                console.error('❌ WHEWS鉴权失败（4401），请检查WHEWS_TOKEN配置');
+                showDataSourceError('whews', ERROR_TYPES.CONNECTION_REFUSED, message);
+                console.error(`❌ WHEWS连接关闭（${event.code}）：${message}，已停止重连`);
                 return;
             }
 
@@ -1808,8 +1744,6 @@ function initWhewsWss() {
 
             clearInterval(whewsPingTimer);
             whewsPingTimer = null;
-            clearTimeout(whewsRefreshTimer);
-            whewsRefreshTimer = null;
             whewsWebSocket = null;
         },
         onError: () => {
@@ -1818,6 +1752,12 @@ function initWhewsWss() {
         reconnectCallback: initWhewsWss,
         reconnectCount: whewsReconnectCount++
     });
+
+    // createWebSocket 可能因网络离线或构造异常提前返回 null（不触发任何回调），
+    // 此时必须释放连接锁，否则后续重连会被 isConnectingWhewsWs 卡死而永久不重连
+    if (!whewsWebSocket) {
+        isConnectingWhewsWs = false;
+    }
 
     // 台风数据独立于WHEWS WebSocket（走Fan Studio HTTP API），仅首次初始化一次
     // 重连时不重复获取，后续由台风定时更新器每10分钟刷新
@@ -2417,7 +2357,13 @@ function resetPagesToDefault() {
         renderHistoryData(4, false, "暂无气象预警数据", "", PAGE_COLOR_MAP[4]);
     }
     if (CONFIG.PAGE_ENABLED[5]) {
-        renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
+        // 台风数据来自HTTP定时更新且带去重，若本地仍有缓存则直接重绘，避免停留在"暂无"
+        if (currentTyphoonData) {
+            lastTyphoon = "";
+            parseTyphoonData(currentTyphoonData, CONFIG.DATA_SOURCE, true);
+        } else {
+            renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
+        }
     }
 }
 
@@ -2965,6 +2911,9 @@ function updateDataSourceStatus(source, closeCode, reconnectCount) {
 function markDataSourceConnected(source) {
     if (!dataSourceStatus[source]) return;
     
+    // 记录连接前是否处于错误状态，用于清除该数据源的错误提示
+    const hadError = dataSourceStatus[source].errorType !== null;
+    
     dataSourceStatus[source] = {
         connected: true,
         errorType: null,
@@ -2973,8 +2922,10 @@ function markDataSourceConnected(source) {
     
     console.log(`✅ 数据源已连接 [${source}]`);
     
-    // 如果之前显示了该数据源的错误信息，现在可以清除
-    hideDataSourceError(source);
+    // 如果之前显示了该数据源的错误信息，重连成功后清除对应页面的提示
+    if (hadError) {
+        hideDataSourceError(source);
+    }
     
     // 如果所有数据源都已连接或恢复，隐藏全局网络断开提示
     checkAndHideGlobalNetworkStatus();
@@ -3030,9 +2981,54 @@ function showDataSourceError(source, errorType, message) {
  * @param {string} source - 数据源标识
  */
 function hideDataSourceError(source) {
-    // 当数据源重新连接成功时，对应的页面会在onOpen回调中通过resetPagesToDefault()等函数重置
-    // 这里主要用于清理额外的状态标记
+    if (!CONFIG.SHOW_NETWORK_STATUS) return;
+    
     console.log(`✅ 清除数据源错误显示 [${source}]`);
+    
+    // 服务端重连后会重新推送当前最新快照，但快照会被各页面的去重状态判为"旧数据"丢弃，
+    // 导致页面一直停留在"暂无数据"。因此重连成功后同步复位该数据源对应的去重状态。
+    // 重置该数据源影响页面的显示（与showDataSourceError的页面映射保持一致）
+    switch (source) {
+        case 'intensity':
+            lastIntensity = "";
+            if (CONFIG.PAGE_ENABLED[2]) {
+                renderHistoryData(2, false, "暂无烈度速报数据");
+            }
+            break;
+            
+        case 'wolfx':
+            alertStore = { lastShockTime: "", lastSource: "", lastTime: 0, lastProvince: "", lastUpdates: 0 };
+            measureDataCache = {};
+            lastMeasure = "";
+            if (CONFIG.PAGE_ENABLED[0]) {
+                renderHistoryData(0, false, "暂无地震预警数据");
+            }
+            if (CONFIG.PAGE_ENABLED[1]) {
+                renderHistoryData(1, false, "暂无台网测定数据");
+            }
+            break;
+            
+        case 'whews':
+            alertStore = { lastShockTime: "", lastSource: "", lastTime: 0, lastProvince: "", lastUpdates: 0 };
+            measureDataCache = {};
+            lastMeasure = "";
+            lastTsunami = "";
+            lastWeather = "";
+            if (CONFIG.PAGE_ENABLED[0]) {
+                renderHistoryData(0, false, "暂无地震预警数据");
+            }
+            if (CONFIG.PAGE_ENABLED[1]) {
+                renderHistoryData(1, false, "暂无台网测定数据");
+            }
+            if (CONFIG.PAGE_ENABLED[3]) {
+                renderHistoryData(3, false, "暂无海啸预警数据", "", PAGE_COLOR_MAP[3]);
+            }
+            if (CONFIG.PAGE_ENABLED[4]) {
+                dom.weatherTag.style.backgroundColor = PAGE_COLOR_MAP[4];
+                renderHistoryData(4, false, "暂无气象预警数据", "", PAGE_COLOR_MAP[4]);
+            }
+            break;
+    }
 }
 
 /**
@@ -3071,10 +3067,26 @@ function checkAllDataSourcesNetworkIssue() {
 }
 
 /**
- * 检查并隐藏全局网络状态（如果所有数据源都已恢复）
+ * 获取当前实际启用的数据源列表
+ * 主数据源二选一（wolfx/whews），烈度速报（intensity）始终启用
+ * @returns {string[]} - 启用中的数据源标识数组
+ */
+function getActiveDataSources() {
+    return [
+        CONFIG.DATA_SOURCE === "whews" ? "whews" : "wolfx",
+        "intensity"
+    ];
+}
+
+/**
+ * 检查并隐藏全局网络状态（如果所有启用的数据源都已恢复）
  */
 function checkAndHideGlobalNetworkStatus() {
-    const allConnected = Object.values(dataSourceStatus).every(status => status.connected === true);
+    // 只检查实际启用的数据源，未启用的数据源永远不会连接成功
+    const allConnected = getActiveDataSources().every(source => {
+        const status = dataSourceStatus[source];
+        return !status || status.connected === true;
+    });
     
     if (allConnected && networkStatusDisplayed) {
         hideNetworkDisconnectedStatus();

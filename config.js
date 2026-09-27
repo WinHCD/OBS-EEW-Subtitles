@@ -17,11 +17,6 @@ const CONFIG = {
     // WHEWS 聚合端点（包含CEA/CEA-PR/CENC/海啸/气象，除台风外）
     WHEWS_WS_ALL: "wss://api.2v8.cn/ws/all",
 
-    // WHEWS App鉴权凭证（用于解锁CEA/CEA-PR地震预警，在 https://api.2v8.cn/apply 申请）
-    // 留空则仅接收非CEA源（CENC/海啸/气象），不接收地震预警
-    WHEWS_APP_ID: "",
-    WHEWS_APP_SECRET: "",
-
     // ==================== 烈度速报配置 ====================
     // 烈度速报数据源: "nowquake" - 使用NowQuake（目前唯一支持）
     INTENSITY_SOURCE: "auto",

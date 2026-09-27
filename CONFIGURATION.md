@@ -15,8 +15,6 @@
 | `TYPHOON_API` | 台风实况API地址 | `https://api.fanstudio.tech/we/typhoon.php` | 台风信息页数据来源（Fan Studio台风接口，与主数据源无关） |
 | `WHEWS_TOKEN` | WHEWS WAuth 连接令牌 | `""` | 格式 `wat_xxxxxxxx`，在 <https://auth.beecld.com> 获取。缺失或无效时连接以关闭码 `4401` 断开并停止重连 |
 | `WHEWS_WS_ALL` | WHEWS 聚合 WebSocket 地址 | `wss://api.2v8.cn/ws/all` | 包含 CEA/CEA-PR/CENC/海啸/气象，不含台风 |
-| `WHEWS_APP_ID` | WHEWS App 鉴权 ID | `""` | 格式 `app_xxxx`，在 <https://api.2v8.cn/apply> 申请；用于解锁 CEA/CEA-PR 地震预警 |
-| `WHEWS_APP_SECRET` | WHEWS App 鉴权密钥 | `""` | 与 `WHEWS_APP_ID` 配套使用；两者留空则仅接收非 CEA 源（CENC/海啸/气象） |
 
 ### 2. 烈度速报配置
 
@@ -117,8 +115,6 @@
 - `MAX_WS_RECONNECT` 设置为 `0` 时，WebSocket 连接将无限重连；设置为大于 0 的值时，达到该次数后停止重连
 - 台风信息页（台风实况）数据来自 Fan Studio 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关
 - WHEWS 数据源需要先配置 `WHEWS_TOKEN`（WAuth 连接令牌），否则连接以 `4401` 关闭并停止重连
-- WHEWS 的 `WHEWS_APP_ID` / `WHEWS_APP_SECRET` 用于解锁 CEA/CEA-PR 地震预警；留空时仅接收 CENC 台网测定、海啸预警、气象预警
-- WHEWS 的 App 鉴权（accessToken）仅绑定当前 WebSocket 连接，断线重连会自动重新鉴权；鉴权服务临时不可用（`4503`）时会自动重连，不影响非 CEA 源
 
 ### 显示参数
 - `SCROLL_SPEED` 过高可能导致文本滚动过快，影响阅读
@@ -153,8 +149,6 @@ const CONFIG = {
     // WHEWS 数据源配置（使用 DATA_SOURCE: "whews" 时生效）
     WHEWS_TOKEN: "",
     WHEWS_WS_ALL: "wss://api.2v8.cn/ws/all",
-    WHEWS_APP_ID: "",
-    WHEWS_APP_SECRET: "",
 
     // 烈度速报配置
     INTENSITY_SOURCE: "auto",
