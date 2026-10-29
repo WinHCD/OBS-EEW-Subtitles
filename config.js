@@ -7,8 +7,8 @@ const CONFIG = {
     // Wolfx WebSocket地址
     WOLFX_WS_ALL: "wss://ws-api.wolfx.jp/all_eew",
 
-    // 台风实况API地址（Fan Studio提供，台风信息页数据来源，与主数据源无关）
-    TYPHOON_API: "https://api.fanstudio.tech/we/typhoon.php",
+    // 台风实况API地址（Jian Project提供，台风信息页数据来源，与主数据源无关）
+    TYPHOON_API: "https://api.sismotide.top/get/typhoon.php",
 
     // ---- WHEWS API 配置 ----
     // WHEWS 鉴权令牌（格式: wat_xxxxxxxx，在 https://auth.beecld.com 获取）

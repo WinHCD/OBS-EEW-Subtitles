@@ -11,7 +11,7 @@
 - **Wolfx**：默认数据源
 - **WHEWS**：聚合数据源（需在 `config.js` 中配置鉴权令牌）
 
-台风信息页（台风实况）数据来自 Fan Studio 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关。
+台风信息页（台风实况）数据来自 Jian Project 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关。
 
 ### 核心功能
 

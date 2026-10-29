@@ -12,7 +12,7 @@
 |--------|------|--------|------|
 | `DATA_SOURCE` | 主数据源选择 | `"wolfx"` | `"wolfx"`: 使用Wolfx数据源；`"whews"`: 使用WHEWS数据源 |
 | `WOLFX_WS_ALL` | Wolfx WebSocket 连接地址 | `wss://ws-api.wolfx.jp/all_eew` | Wolfx 数据源地址 |
-| `TYPHOON_API` | 台风实况API地址 | `https://api.fanstudio.tech/we/typhoon.php` | 台风信息页数据来源（Fan Studio台风接口，与主数据源无关） |
+| `TYPHOON_API` | 台风实况API地址 | `https://api.sismotide.top/get/typhoon.php` | 台风信息页数据来源（Jian Project台风接口，与主数据源无关） |
 | `WHEWS_TOKEN` | WHEWS WAuth 连接令牌 | `""` | 格式 `wat_xxxxxxxx`，在 <https://auth.beecld.com> 获取。缺失或无效时连接以关闭码 `4401` 断开并停止重连 |
 | `WHEWS_WS_ALL` | WHEWS 聚合 WebSocket 地址 | `wss://api.2v8.cn/ws/all` | 包含 CEA/CEA-PR/CENC/海啸/气象，不含台风 |
 
@@ -113,7 +113,7 @@
 - 烈度速报仅支持 NowQuake 数据源（`INTENSITY_SOURCE` 的 `"auto"` 与 `"nowquake"` 行为一致）
 - NowQuake 数据源无法连接时，系统将停止重连并显示相应提示
 - `MAX_WS_RECONNECT` 设置为 `0` 时，WebSocket 连接将无限重连；设置为大于 0 的值时，达到该次数后停止重连
-- 台风信息页（台风实况）数据来自 Fan Studio 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关
+- 台风信息页（台风实况）数据来自 Jian Project 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关
 - WHEWS 数据源需要先配置 `WHEWS_TOKEN`（WAuth 连接令牌），否则连接以 `4401` 关闭并停止重连
 
 ### 显示参数
@@ -144,7 +144,7 @@ const CONFIG = {
     // 数据源配置
     DATA_SOURCE: "wolfx",
     WOLFX_WS_ALL: "wss://ws-api.wolfx.jp/all_eew",
-    TYPHOON_API: "https://api.fanstudio.tech/we/typhoon.php",
+    TYPHOON_API: "https://api.sismotide.top/get/typhoon.php",
 
     // WHEWS 数据源配置（使用 DATA_SOURCE: "whews" 时生效）
     WHEWS_TOKEN: "",

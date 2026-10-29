@@ -635,6 +635,19 @@ function handleMeasureCache() {
 }
 
 /**
+ * 格式化台网测定时间
+ * 使用WHEWS数据源时仅显示到分钟
+ * @param {string} time - 时间字符串
+ * @returns {string} - 格式化后的时间
+ */
+function formatMeasureTime(time) {
+    if (!time) return "未知时间";
+    if (CONFIG.DATA_SOURCE !== "whews") return time;
+    // "2026-07-29 14:09:57" → "2026-07-29 14:09"
+    return time.replace(/(\d{2}:\d{2}):\d{2}/, "$1");
+}
+
+/**
  * 解析台网测定数据
  * 负责处理来自不同地震台网的测定数据
  * @param {Object} data - 台网测定数据对象
@@ -649,7 +662,7 @@ function parseMeasureData(data, source, isInitial = false) {
             // 当数据验证失败时，使用历史数据渲染，不触发强制显示
             renderHistoryData(1, true, 
                 latestData.source !== "cenc" ? `${sourceMap[latestData.source]}` : `中国地震台网中心${latestData.data.infoTypeName?.includes("正式") ? "正式测定" : latestData.data.infoTypeName?.includes("自动") ? "自动测定" : "测定"}`,
-                `${latestData.data.shockTime || "未知时间"} ${latestData.data.placeName} 发生<span class="highlight-num">${latestData.data.magnitude}</span>级地震，深度<span class="highlight-num">${latestData.data.depth || "未知"}</span>公里。`
+                `${formatMeasureTime(latestData.data.shockTime)} ${latestData.data.placeName} 发生<span class="highlight-num">${latestData.data.magnitude}</span>级地震，深度<span class="highlight-num">${latestData.data.depth || "未知"}</span>公里。`
             );
         } else {
             renderHistoryData(1, false, "暂无台网测定数据");
@@ -702,7 +715,7 @@ function parseMeasureData(data, source, isInitial = false) {
             // 如果latestData是从缓存中获取的其他数据（如更旧的正式测定数据），则使用历史数据渲染
             renderHistoryData(1, true, 
                 latestData.source !== "cenc" ? `${sourceMap[latestData.source]}` : `中国地震台网中心${latestData.data.infoTypeName?.includes("正式") ? "正式测定" : latestData.data.infoTypeName?.includes("自动") ? "自动测定" : "测定"}`,
-                `${latestData.data.shockTime || "未知时间"} ${latestData.data.placeName} 发生<span class="highlight-num">${latestData.data.magnitude}</span>级地震，深度<span class="highlight-num">${latestData.data.depth || "未知"}</span>公里。`
+                `${formatMeasureTime(latestData.data.shockTime)} ${latestData.data.placeName} 发生<span class="highlight-num">${latestData.data.magnitude}</span>级地震，深度<span class="highlight-num">${latestData.data.depth || "未知"}</span>公里。`
             );
         }
     } else {
@@ -725,7 +738,7 @@ function renderMeasureLatest(latestItem, isInitial = false) {
     console.log(`✅ 渲染台网测定数据：${data.placeName} ${data.magnitude}级`);
 
     const line1 = source !== "cenc" ? `${sourceMap[source]}` : `中国地震台网中心${dataType}`;
-    const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里。`;
+    const line2 = `${formatMeasureTime(data.shockTime)} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里。`;
     
     // 根据是否是初始化数据决定使用哪个渲染函数
     if (isInitial) {
@@ -979,34 +992,23 @@ function parseWolfxJmaEqlist(data, isInitial = false) {
 
 /**
  * 获取台风数据
- * 从台风API获取当前活跃台风数据；支持传入台风编号(tfid)查询历史台风
- * @param {string|number} [tfid] - 台风编号（如：202606），可选，传入则查询历史台风数据
- * @returns {Promise<Array|null>} 台风数据数组；接口明确返回"当前无台风"时返回空数组[]；请求失败返回null
+ * 从 Jian Project 台风接口获取当前活跃台风数据（字段名与内部格式一致，无需转换）
+ * @returns {Promise<Array|null>} 台风数据数组；无活跃台风时返回空数组[]；请求失败返回null
  */
-async function fetchTyphoonData(tfid) {
+async function fetchTyphoonData() {
     const controller = new AbortController();
     const timeoutTimer = setTimeout(() => controller.abort(), CONFIG.HTTP_TIMEOUT);
     try {
-        let url = CONFIG.TYPHOON_API;
-        if (tfid !== undefined && tfid !== null && tfid !== "") {
-            url += `?tfid=${encodeURIComponent(tfid)}`;
-        }
-        const response = await fetch(url, { signal: controller.signal });
+        const response = await fetch(CONFIG.TYPHOON_API, { signal: controller.signal });
         clearTimeout(timeoutTimer);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
         const data = await response.json();
-        // 接口统一返回数组格式：[ {台风数据1}, {台风数据2} ]
+        // 接口统一返回数组格式：[ {台风数据1}, {台风数据2} ]，无活跃台风时为 []
         if (Array.isArray(data)) {
             return data;
         }
-        // 无台风状态：{"msg":"当前无台风"}
-        if (data && data.msg === "当前无台风") {
-            console.log("🌪️ 当前无生效台风");
-            return [];
-        }
-        // 其他异常返回（如 {"error":true,"msg":"请求失败"}）
         console.error("获取台风数据失败：", data);
         return null;
     } catch (err) {
@@ -1017,83 +1019,6 @@ async function fetchTyphoonData(tfid) {
         }
         return null;
     }
-}
-
-/**
- * 转换台风API数据格式为内部格式
- * @param {Array} apiData - API返回的台风数据数组
- * @returns {Array} - 转换后的台风数据数组
- */
-function convertTyphoonApiData(apiData) {
-    if (!Array.isArray(apiData) || apiData.length === 0) {
-        return null;
-    }
-
-    return apiData.map(tf => {
-        // 从points数组中获取最新的实况点数据
-        let latestPoint = null;
-        if (Array.isArray(tf.points) && tf.points.length > 0) {
-            // 获取最后一个点作为最新实况点（points数组按时间排序）
-            latestPoint = tf.points[tf.points.length - 1];
-        }
-
-        // 构建内部格式的台风数据
-        // 注意：API使用的字段名与内部格式不同
-        return {
-            id: tf.tfid || "",
-            name: tf.name || "",
-            name_en: tf.enname || "",
-            // 优先使用最新实况点数据，其次使用顶层字段
-            latitude: latestPoint?.lat || tf.centerlat || "",
-            longitude: latestPoint?.lng || tf.centerlng || "",
-            // API字段映射：strong -> type, speed -> windSpeed
-            type: latestPoint?.strong || "",
-            power: latestPoint?.power || "",
-            pressure: latestPoint?.pressure || "",
-            windSpeed: latestPoint?.speed || "",  // API: speed (米/秒)
-            // API字段映射：movedirection -> moveDirection, movespeed -> moveSpeed
-            moveDirection: latestPoint?.movedirection || "",
-            moveSpeed: latestPoint?.movespeed || "",  // API: movespeed (公里/小时)
-            radius7: latestPoint?.radius7 || "",
-            radius10: latestPoint?.radius10 || "",
-            radius12: latestPoint?.radius12 || "",
-            updateTime: latestPoint?.time || tf.starttime || "",
-            // 保留原始数据的额外字段
-            isactive: tf.isactive,
-            warnlevel: tf.warnlevel,
-            ckposition: tf.ckposition,
-            jl: tf.jl
-        };
-    });
-}
-
-/**
- * 解析并显示台风数据（Wolfx数据源专用）
- * @param {Array} data - 台风API返回的数据数组（已由fetchTyphoonData处理，"当前无台风"时为空数组）
- * @param {boolean} isInitial - 是否是初始化数据
- */
-function parseWolfxTyphoonData(data, isInitial = false) {
-    // 空数组或非数组表示当前无台风
-    if (!Array.isArray(data) || data.length === 0) {
-        renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
-        currentTyphoonData = null;
-        lastTyphoon = "";
-        return;
-    }
-
-    // 转换数据格式
-    const convertedData = convertTyphoonApiData(data);
-    if (!convertedData || convertedData.length === 0) {
-        renderHistoryData(5, false, "暂无台风信息数据", "", PAGE_COLOR_MAP[5]);
-        currentTyphoonData = null;
-        lastTyphoon = "";
-        return;
-    }
-
-    console.log(`✅ 收到台风数据：共${convertedData.length}个台风`);
-
-    // 使用现有的parseTyphoonData函数处理
-    parseTyphoonData(convertedData, "wolfx", isInitial);
 }
 
 /**
@@ -1298,7 +1223,7 @@ function initIntensityWss() {
 }
 
 /**
- * 启动台风数据定时更新（仅Wolfx数据源）
+ * 启动台风数据定时更新
  * 每10分钟更新一次台风数据
  */
 function startTyphoonUpdateTimer() {
@@ -1319,13 +1244,8 @@ function startTyphoonUpdateTimer() {
                     console.log("⚠️ 台风接口请求失败，保留当前数据");
                     return;
                 }
-                if (CONFIG.DATA_SOURCE === "whews") {
-                    // Fan Studio台风API字段名与内部格式不同，先转换；空数组表示当前无台风
-                    const converted = convertTyphoonApiData(typhoonData) || [];
-                    parseTyphoonData(converted, "whews", false);
-                } else {
-                    parseWolfxTyphoonData(typhoonData, false);
-                }
+                // 空数组表示当前无台风
+                parseTyphoonData(typhoonData, CONFIG.DATA_SOURCE, false);
             } catch (err) {
                 console.error("定时更新台风数据失败：", err);
             }
@@ -1441,15 +1361,14 @@ function initWolfxWss() {
                 }, 50 + index * 2000); // 每条指令间隔2秒
             });
 
-            // 同时获取台风数据（Wolfx不提供台风信息，使用Fan Studio台风API）
-            // 注意：此台风API仅在Wolfx数据源时调用
+            // 同时获取台风数据（Jian Project 台风接口，与主数据源无关）
             setTimeout(async () => {
                 if (CONFIG.PAGE_ENABLED[5] && CONFIG.DATA_SOURCE === "wolfx") {
                     try {
-                        console.log("🌀 正在获取台风数据（Fan Studio台风API）...");
+                        console.log("🌀 正在获取台风数据（Jian Project台风API）...");
                         const typhoonData = await fetchTyphoonData();
                         if (typhoonData) {
-                            parseWolfxTyphoonData(typhoonData, true);
+                            parseTyphoonData(typhoonData, "wolfx", true);
                         }
                         // 启动台风数据定时更新
                         startTyphoonUpdateTimer();
@@ -1759,19 +1678,18 @@ function initWhewsWss() {
         isConnectingWhewsWs = false;
     }
 
-    // 台风数据独立于WHEWS WebSocket（走Fan Studio HTTP API），仅首次初始化一次
+    // 台风数据独立于WHEWS WebSocket（走 Jian Project HTTP API），仅首次初始化一次
     // 重连时不重复获取，后续由台风定时更新器每10分钟刷新
     if (CONFIG.PAGE_ENABLED[5] && !isWhewsInited) {
         setTimeout(async () => {
             try {
-                console.log("🌀 正在获取台风数据（Fan Studio台风API）...");
+                console.log("🌀 正在获取台风数据（Jian Project台风API）...");
                 const typhoonData = await fetchTyphoonData();
                 if (typhoonData === null) {
                     console.log("⚠️ 台风接口请求失败，跳过初始化显示");
                 } else {
-                    // 台风API字段名与内部格式不同，先转换；空数组表示当前无台风
-                    const converted = convertTyphoonApiData(typhoonData) || [];
-                    parseTyphoonData(converted, "whews", true);
+                    // 空数组表示当前无台风
+                    parseTyphoonData(typhoonData, "whews", true);
                 }
                 startTyphoonUpdateTimer();
             } catch (err) {
@@ -2218,6 +2136,19 @@ function parseTsunamiData(data, source, isInitial = false) {
 }
 
 /**
+ * 格式化台风风圈半径
+ * 四象限值（如 "320|270|300|250"）按 东北/东南/西南/西北 展开显示
+ * @param {number|string} value - 风圈半径
+ * @returns {string} - 带单位的显示文本
+ */
+function formatTyphoonRadius(value) {
+    const text = String(value).trim();
+    if (!text.includes("|")) return `${text}公里`;
+    const quadrants = ["东北", "东南", "西南", "西北"];
+    return text.split("|").map((v, i) => `${quadrants[i] || ""}${v}`).join("、") + "公里";
+}
+
+/**
  * 解析台风信息数据
  * @param {Object} data - 台风信息数据对象
  */
@@ -2285,15 +2216,15 @@ function parseTyphoonData(data, source, isInitial = false) {
         // 风圈半径信息
         let radiusInfo = "";
         if (typhoon.radius7 && typhoon.radius7 !== "" && typhoon.radius7 !== "null") {
-            radiusInfo += `七级风圈半径<span class="highlight-num">${typhoon.radius7}</span>公里`;
+            radiusInfo += `七级风圈半径<span class="highlight-num">${formatTyphoonRadius(typhoon.radius7)}</span>`;
         }
         if (typhoon.radius10 && typhoon.radius10 !== "" && typhoon.radius10 !== "null") {
             if (radiusInfo) radiusInfo += "，";
-            radiusInfo += `十级风圈半径<span class="highlight-num">${typhoon.radius10}</span>公里`;
+            radiusInfo += `十级风圈半径<span class="highlight-num">${formatTyphoonRadius(typhoon.radius10)}</span>`;
         }
         if (typhoon.radius12 && typhoon.radius12 !== "" && typhoon.radius12 !== "null") {
             if (radiusInfo) radiusInfo += "，";
-            radiusInfo += `十二级风圈半径<span class="highlight-num">${typhoon.radius12}</span>公里`;
+            radiusInfo += `十二级风圈半径<span class="highlight-num">${formatTyphoonRadius(typhoon.radius12)}</span>`;
         }
 
         // 构建台风详细信息
