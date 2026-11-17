@@ -2,7 +2,7 @@
 const CONFIG = {
     // ==================== 数据源配置 ====================
     // 主数据源选择: "wolfx" 或 "whews"
-    DATA_SOURCE: "wolfx",
+    DATA_SOURCE: "whews",
 
     // Wolfx WebSocket地址
     WOLFX_WS_ALL: "wss://ws-api.wolfx.jp/all_eew",
@@ -12,7 +12,7 @@ const CONFIG = {
 
     // ---- WHEWS API 配置 ----
     // WHEWS 鉴权令牌（格式: wat_xxxxxxxx，在 https://auth.beecld.com 获取）
-    WHEWS_TOKEN: "",
+    WHEWS_TOKEN: "wat_c3fb654590ce1afd726e6f09751f2a7fb3088da72c89a883",
 
     // WHEWS 聚合端点（包含CEA/CEA-PR/CENC/海啸/气象，除台风外）
     WHEWS_WS_ALL: "wss://api.2v8.cn/ws/all",
@@ -86,7 +86,7 @@ const CONFIG = {
     },
 
     // ==================== 应用信息配置 ====================
-    APP_INFO: "所有预警信息仅供参考，仅限交流学习使用，请以当地官方发布信息为准。地震不可准确预测，不要盼灾幸灾，请理性讨论。"
+    APP_INFO: "所有预警信息仅供参考，仅限交流学习使用，请以当地官方发布信息为准。直播间为公益性直播，基本无人值守，谢绝打赏。地震不可准确预测，不要盼灾幸灾，请理性讨论。应用信息：左上TREM Lite、右上EQuake、左下EEWCN（修改版）、右下GlobalQuake（修改版） 、右下角小窗Swarm。"
 };
 
 // ==================== 页面颜色配置 ====================

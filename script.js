@@ -1,4 +1,4 @@
-let currentPage=0,totalPage=7;
+let currentPage=0,totalPage=7,pageTurning=false;
 let timer=null,forcedTimer=null;
 let isForcedShow=false,isScrolling=false;
 let lastAlert="",lastMeasure="",lastIntensity="",lastTsunami="",lastWeather="",lastTyphoon="";
@@ -156,7 +156,13 @@ function clearDOMCache(page) {
  */
 function startPageLogic() {
     clearTimer();
-    
+
+    // 取消所有仍在运行的rAF动画，防止翻页后老的动画继续修改全局变量
+    Object.keys(animationIds).forEach(id => {
+        cancelAnimationFrame(animationIds[id]);
+        delete animationIds[id];
+    });
+
     const wrap = dom.contentWraps[currentPage];
     if (!wrap) return;
     
@@ -205,6 +211,8 @@ function startPageLogic() {
  * 负责处理页面之间的切换逻辑
  */
 function doPageTurn() {
+    // 防重入：已经在翻页过程中就不再进
+    if (pageTurning) return;
     if (isForcedShow || isScrolling || curScrollingLines.length > 0) return;
     
     // 找到下一个启用的页面
@@ -215,6 +223,8 @@ function doPageTurn() {
             break;
         }
     }
+
+    pageTurning = true;
     
     dom.wrap.style.transform = `translate3d(0, ${-100*nextPage}%, 0)`;
     dom.wrap.style.webkitTransform = `translate3d(0, ${-100*nextPage}%, 0)`;
@@ -223,6 +233,7 @@ function doPageTurn() {
         dom.wrap.removeEventListener("transitionend", onTransEnd);
         dom.wrap.removeEventListener("webkitTransitionEnd", onTransEnd);
         currentPage = nextPage;
+        pageTurning = false;
         startPageLogic();
     };
 
@@ -235,6 +246,7 @@ function doPageTurn() {
         dom.wrap.removeEventListener("transitionend", onTransEnd);
         dom.wrap.removeEventListener("webkitTransitionEnd", onTransEnd);
         currentPage = nextPage;
+        pageTurning = false;
         startPageLogic();
     }, CONFIG.TRANSITION + 100);
 }
@@ -301,27 +313,35 @@ function startLineScroll(lineText, lineItem) {
             // 滚动结束
             lineText.style.transform = "";
             lineText.style.webkitTransform = "";
-            // 清除will-change属性
             lineText.style.willChange = "";
-            curScrollingLines = curScrollingLines.filter(item => item !== lineItem);
-            isScrolling = false;
-            
+
             // 清除动画ID
             if (animationIds[lineItemId]) {
                 delete animationIds[lineItemId];
             }
-            
-            // 如果处于强制显示状态，重新启动滚动
-            if (isForcedShow) {
-                setTimeout(() => {
-                    startLineScroll(lineText, lineItem);
-                }, 500); // 短暂延迟后重新开始滚动
-            } else {
-                setTimeout(() => {
-                    if (curScrollingLines.length === 0) {
-                        doPageTurn();
-                    }
-                }, 100);
+
+            // 从滚动列表中移除当前行
+            curScrollingLines = curScrollingLines.filter(item => item !== lineItem);
+
+            // 全部滚动行结束时才标记 isScrolling=false 并触发翻页。
+            // 必须同时满足：
+            //   1) curScrollingLines 已空（确实全部结束）
+            //   2) lineItem 仍属于 currentPage 的 wrap（没被翻页淘汰的旧 DOM 回调）
+            //   3) 不在翻页过程中
+            // 翻页后旧页面的 DOM 仍在（只是 transform 藏起来了），它的 rAF 结束回调
+            // 到达时 curScrollingLines 已被 startPageLogic 清空，会误判为"可以翻页"
+            if (curScrollingLines.length === 0) {
+                const currentWrap = dom.contentWraps[currentPage];
+                const stillOnCurrentPage = currentWrap && currentWrap.contains(lineItem);
+                if (!stillOnCurrentPage || pageTurning) {
+                    return;
+                }
+                isScrolling = false;
+                if (isForcedShow) {
+                    setTimeout(() => { startLineScroll(lineText, lineItem); }, 500);
+                } else {
+                    doPageTurn();
+                }
             }
         }
     }
@@ -1613,8 +1633,8 @@ function initWhewsWss() {
                     const source = msg.source || "";
                     if (source === "cea" || source === "cea-pr") {
                         handleWhewsCeaData(msg);
-                    } else if (source === "cenc") {
-                        handleWhewsCencData(msg);
+                    } else if (source === "cenc" || source === "beijing" || source === "yunnan" || source === "ningxia" || source === "shanxi" || source === "shandong" || source === "guangxi") {
+                        handleWhewsMeasureData(msg);
                     } else if (source === "tsunami") {
                         handleWhewsTsunamiData(msg);
                     } else if (source === "weatheralarm") {
@@ -1757,38 +1777,41 @@ function extractProvinceFromWhews(placeName) {
 }
 
 /**
- * 处理WHEWS CENC台网情报数据
+ * 处理WHEWS台网测定数据
+ * 包含 CENC（国家台网）与各省级地震局（北京/云南/宁夏/山西/山东/广西）
+ * 各局字段略有差异（省级局一般无 infoTypeName，部分缺 depth），统一适配后复用 parseMeasureData()
  */
-function handleWhewsCencData(msg) {
+function handleWhewsMeasureData(msg) {
     const d = msg.Data;
-    if (!d || !d.id || !d.placeName || !d.magnitude) return;
+    const source = msg.source || "cenc";
+    if (!d || !d.placeName || !d.magnitude) return;
     
     const md5 = msg.md5 || "";
     
-    // md5去重
+    // md5去重（服务端对每条Data算的哈希，天然全局唯一）
     if (md5 && whewsCencSeenMd5[md5]) return;
     if (md5) whewsCencSeenMd5[md5] = true;
     
     // 连接后3秒内的数据都是初始化批次，不强制显示
     const isInitial = !(whewsCencSeenMd5._initWindow && whewsCencSeenMd5._initWindow._done);
     
-    console.log(`✅ 收到WHEWS CENC情报：${d.placeName} ${d.magnitude}级 (${d.infoTypeName || "测定"})`);
+    console.log(`✅ 收到WHEWS ${source}台网测定：${d.placeName} ${d.magnitude}级`);
     
-    // 适配为parseMeasureData期望的格式（cenc源）
+    // 适配为parseMeasureData期望的格式
     const adaptedData = {
-        id: d.id,
+        id: d.id || "",
         placeName: d.placeName,
         magnitude: d.magnitude,
         shockTime: d.shockTime,
         depth: d.depth,
-        infoTypeName: d.infoTypeName || "测定",
+        infoTypeName: d.infoTypeName || (source === "cenc" ? "测定" : ""),
         maxIntensity: d.maxIntensity || "",
         latitude: d.latitude,
         longitude: d.longitude,
         updateTime: d.updateTime
     };
     
-    parseMeasureData(adaptedData, "cenc", isInitial);
+    parseMeasureData(adaptedData, source, isInitial);
 }
 
 /**
