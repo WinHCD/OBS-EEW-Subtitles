@@ -2,7 +2,7 @@
 const CONFIG = {
     // ==================== 数据源配置 ====================
     // 主数据源选择: "wolfx" 或 "whews"
-    DATA_SOURCE: "whews",
+    DATA_SOURCE: "wolfx",
 
     // Wolfx WebSocket地址
     WOLFX_WS_ALL: "wss://ws-api.wolfx.jp/all_eew",
@@ -12,7 +12,7 @@ const CONFIG = {
 
     // ---- WHEWS API 配置 ----
     // WHEWS 鉴权令牌（格式: wat_xxxxxxxx，在 https://auth.beecld.com 获取）
-    WHEWS_TOKEN: "wat_c3fb654590ce1afd726e6f09751f2a7fb3088da72c89a883",
+    WHEWS_TOKEN: "",
 
     // WHEWS 聚合端点（包含CEA/CEA-PR/CENC/海啸/气象，除台风外）
     WHEWS_WS_ALL: "wss://api.2v8.cn/ws/all",
