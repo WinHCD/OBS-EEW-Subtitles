@@ -1082,6 +1082,10 @@ function intHttpRetry() {
 async function getIntEvent(eqId) {
     try {
         const data = await intHttpGet(`${CONFIG.INT_HTTP_EVENT}${eqId}`);
+        // HTTP链路拉取成功才视为真正连通（见initIntensityWss的onOpen说明）
+        if (!dataSourceStatus['intensity'].connected) {
+            markDataSourceConnected('intensity');
+        }
         parseIntensityData(data, true);
         intensityHttpRetryCount = 0;
     } catch (err) {
@@ -1182,7 +1186,8 @@ function initIntensityWss() {
     intensityWebSocket = createWebSocket(CONFIG.INT_WSS_REAL, {
         onOpen: (socket) => {
             isConnectingIntensityWs = false; // 释放连接锁
-            markDataSourceConnected('intensity'); // 标记NowQuake数据源已连接
+            // 不在此标记已连接：NowQuake的WebSocket只在有地震事件时推送，
+            // 握手成功不代表可用。改为HTTP拉取成功或收到推送数据后标记
             console.log("✅ 烈度速报WebSocket连接成功");
             intensityReconnectCount = 0;
             isIntensityInited = true;
@@ -1207,7 +1212,13 @@ function initIntensityWss() {
             if (!e.data || e.data === "ping" || !e.data.startsWith("{")) return;
             try {
                 const data = JSON.parse(e.data);
-                if (data?.eq_id) parseIntensityData(data, false);
+                if (data?.eq_id) {
+                    // 收到实时推送说明烈度速报服务可用（见onOpen说明）
+                    if (!dataSourceStatus['intensity'].connected) {
+                        markDataSourceConnected('intensity');
+                    }
+                    parseIntensityData(data, false);
+                }
             } catch (err) {
                 console.error("❌ 烈度速报数据解析失败：", err, "原始数据：", e.data);
             }
@@ -1350,8 +1361,15 @@ function initWolfxWss() {
     wolfxWebSocket = createWebSocket(CONFIG.WOLFX_WS_ALL, {
         onOpen: (socket) => {
             isConnectingWolfxWs = false; // 释放连接锁
-            markDataSourceConnected('wolfx'); // 标记Wolfx数据源已连接
+            // 不在此标记已连接：握手成功不代表服务可用，若随即被断开，会把页面刷成
+            // "暂无数据"又被下一个关闭事件改回错误提示。改为收到首帧后标记（见onMessage），
+            // 下面的兜底定时器用于处理"服务端长时间不推送"的情况
             console.log("✅ Wolfx WebSocket连接成功");
+            setTimeout(() => {
+                if (socket && socket.readyState === 1) {
+                    markDataSourceConnected('wolfx');
+                }
+            }, 5000);
             wolfxReconnectCount = 0;
             wolfxSeenTypes = {};
             isWolfxInited = true;
@@ -1420,6 +1438,11 @@ function initWolfxWss() {
                 try {
                     const msg = JSON.parse(e.data);
                     const type = msg.type;
+
+                    // 收到首帧才视为真正连通（见onOpen说明）
+                    if (!dataSourceStatus['wolfx'].connected) {
+                        markDataSourceConnected('wolfx');
+                    }
 
                     if (!type) {
                         console.log('⚠️ Wolfx数据缺少type字段，跳过处理');
@@ -1576,7 +1599,9 @@ function initWhewsWss() {
     whewsWebSocket = createWebSocket(url, {
         onOpen: (socket) => {
             isConnectingWhewsWs = false;
-            markDataSourceConnected('whews');
+            // 不在此标记已连接：WHEWS 的令牌鉴权发生在升级之后，服务端可能紧接着以
+            // 4503/4401/4403 关闭连接。若在握手成功时就标记已连接，会把页面刷成"暂无数据"
+            // 又被随即的关闭改回错误提示，出现闪烁。改为收到首帧后再标记（见 onMessage）
             console.log('✅ WHEWS WebSocket连接成功（ws/all聚合端点）');
             // 记录连接建立时间。退避计数不在此清零：仅在连接稳定存活60秒后才清零（见onClose），
             // 否则服务端"连上即断开"时每次重连都从3秒重新开始，会因高频重连触发服务端封禁
@@ -1614,6 +1639,11 @@ function initWhewsWss() {
 
             try {
                 const parsed = JSON.parse(e.data);
+
+                // 收到首帧才视为真正连通（见 onOpen 说明），此时再清除错误提示并复位去重状态
+                if (!dataSourceStatus['whews'].connected) {
+                    markDataSourceConnected('whews');
+                }
                 
                 // ws/all 首连推送是数组 [{...},{...}]，后续是单个对象
                 const messages = Array.isArray(parsed) ? parsed : [parsed];
