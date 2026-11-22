@@ -9,6 +9,8 @@ let intensityWebSocket=null,intensityPingTimer=null,intensityReconnectCount=0;
 let intensityHttpTimer=null,intensityHttpRetryCount=0;
 let isIntensityInited=false;
 let intensitySourceStopped=false; // 烈度速报数据源停止连接标记
+let intensityAutoJian=false; // auto 模式下是否已切换到 Jian
+let intensityWsFailCount=0; // NowQuake WebSocket 连续失败次数
 let wolfxWebSocket=null,wolfxPingTimer=null,wolfxReconnectCount=0,wolfxSeenTypes={};
 let isWolfxInited=false;
 let typhoonUpdateTimer=null; // 台风数据定时更新定时器
@@ -35,11 +37,27 @@ let whewsCencSeenMd5={}; // CENC情报去重缓存
 let whewsTsunamiSeenIds={}; // 海啸预警去重缓存
 let isWhewsInited=false;
 
+// Jian Project 数据源变量
+let jianAllWebSocket=null,jianAllPingTimer=null,jianAllReconnectCount=0,jianAllConnectedAt=0;
+let isConnectingJianAllWs=false;
+let jianIrWebSocket=null,jianIrPingTimer=null,jianIrReconnectCount=0,jianIrConnectedAt=0;
+let isConnectingJianIrWs=false;
+let jianAccessToken=""; // 短期访问令牌 at_
+let jianAccessExpireAt=0; // 访问令牌失效时刻（毫秒）
+let jianTokenPromise=null; // 换票请求去重
+let jianAuthFailed=false; // 令牌无效/账号封禁时停止重连
+let jianAllSeenMd5={}; // /all 各源去重缓存
+let jianIrSeenMd5={}; // /cenc-ir 去重缓存
+let jianAllInitWindow=null; // /all 首连快照判定窗口
+let jianIrInitWindow=null; // /cenc-ir 首连快照判定窗口
+let isJianInited=false;
+
 // 数据源连接状态追踪
 let dataSourceStatus = {
-    intensity: { connected: false, errorType: null, errorMessage: null }, // 烈度速报NowQuake
+    intensity: { connected: false, errorType: null, errorMessage: null }, // 烈度速报（NowQuake 或 Jian）
     wolfx: { connected: false, errorType: null, errorMessage: null }, // Wolfx数据源
     whews: { connected: false, errorType: null, errorMessage: null }, // WHEWS数据源
+    jian: { connected: false, errorType: null, errorMessage: null }, // Jian Project数据源
 };
 
 // 错误类型枚举
@@ -95,7 +113,11 @@ const dom={
 
         // 根据数据源配置初始化不同的WebSocket连接
         const dataSource = CONFIG.DATA_SOURCE || "wolfx";
-        if (dataSource === "whews") {
+        if (dataSource === "jian") {
+            // 使用Jian Project数据源
+            console.log("✅ 使用Jian Project数据源");
+            initJianAllWss();  // 初始化Jian /all聚合WebSocket连接
+        } else if (dataSource === "whews") {
             // 使用WHEWS数据源
             console.log("✅ 使用WHEWS数据源");
             initWhewsWss();  // 初始化WHEWS多端点WebSocket连接
@@ -107,11 +129,21 @@ const dom={
 
         // 重置烈度速报数据源状态
         intensitySourceStopped = false;
+        intensityAutoJian = false;
+        intensityWsFailCount = 0;
 
-        // 烈度速报数据源仅支持NowQuake（"auto"与"nowquake"行为一致）
-        initIntensityHttp();  // 初始化NowQuake烈度速报HTTP请求
-        initIntensityWss();   // 初始化NowQuake烈度速报WebSocket连接
-        console.log("✅ 使用NowQuake烈度速报数据源");
+        // 根据配置选择烈度速报数据源，独立于主数据源
+        const intensityMode = getIntensitySourceMode();
+        if (intensityMode === "jian") {
+            console.log("✅ 使用Jian烈度速报数据源");
+            initJianIrWss();
+        } else {
+            initIntensityHttp();  // 初始化NowQuake烈度速报HTTP请求
+            initIntensityWss();   // 初始化NowQuake烈度速报WebSocket连接
+            console.log(intensityMode === "auto"
+                ? "✅ 使用NowQuake烈度速报数据源（auto 故障转移模式）"
+                : "✅ 使用NowQuake烈度速报数据源");
+        }
     } else {
         console.log("❌ 网络连接异常，将在网络恢复后自动初始化");
     }
@@ -124,7 +156,7 @@ const dom={
     startPageLogic();       // 启动页面逻辑
     
     console.log("✅ 预警OBS版初始化完成（包含最终烈度速报解析逻辑）");
-    console.log("✅ 烈度速报数据源: NowQuake");
+    console.log(`✅ 烈度速报数据源: ${isJianIntensitySource() ? "Jian" : "NowQuake"}`);
     console.log("✅ 内存清理机制已启动");
     console.log("✅ 网络状态监听器已启动");
 })();
@@ -611,7 +643,11 @@ function parseAlertData(data, source, isInitial = false) {
         line1 = `${(data.province || "未知").trim()}地震局预警第${data.updates || 1}报`;
     }
 
-    const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里，预计最大烈度<span class="highlight-num">${data.epiIntensity || "未知"}</span>度。`;
+    // Jian CEA 不提供预计最大烈度，缺失时不显示该分句
+    const epiIntensityText = data.epiIntensity
+        ? `，预计最大烈度<span class="highlight-num">${data.epiIntensity}</span>度`
+        : "";
+    const line2 = `${data.shockTime || "未知时间"} ${data.placeName} 发生<span class="highlight-num">${data.magnitude}</span>级地震，深度<span class="highlight-num">${data.depth || "未知"}</span>公里${epiIntensityText}。`;
     
     // 根据是否是初始化数据决定使用哪个渲染函数
     if (isInitial) {
@@ -1064,6 +1100,7 @@ async function intHttpGet(url) {
  * HTTP请求重试函数
  */
 function intHttpRetry() {
+    if (isJianIntensitySource()) return;
     if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
     intensityHttpRetryCount++;
     if (intensityHttpRetryCount >= CONFIG.MAX_HTTP_RETRY) {
@@ -1082,6 +1119,7 @@ function intHttpRetry() {
 async function getIntEvent(eqId) {
     try {
         const data = await intHttpGet(`${CONFIG.INT_HTTP_EVENT}${eqId}`);
+        if (isJianIntensitySource()) return;
         // HTTP链路拉取成功才视为真正连通（见initIntensityWss的onOpen说明）
         if (!dataSourceStatus['intensity'].connected) {
             markDataSourceConnected('intensity');
@@ -1097,6 +1135,7 @@ async function getIntEvent(eqId) {
  * 初始化烈度速报HTTP请求
  */
 async function initIntensityHttp() {
+    if (isJianIntensitySource()) return;
     if (intensityHttpTimer) clearTimeout(intensityHttpTimer);
     if (intensityHttpRetryCount >= CONFIG.MAX_HTTP_RETRY) return;
     try {
@@ -1168,6 +1207,11 @@ function initIntensityWss() {
         console.log('⚠️ 烈度速报数据源已停止连接，跳过NowQuake初始化');
         return;
     }
+    // 当前使用 Jian（显式配置或 auto 已切换）时不再连接 NowQuake
+    if (isJianIntensitySource()) {
+        console.log('⚠️ 当前烈度速报使用Jian，跳过NowQuake初始化');
+        return;
+    }
     
     if (isConnectingIntensityWs) {
         console.log('⚠️ 烈度速报WebSocket正在连接中，跳过重复连接');
@@ -1190,6 +1234,7 @@ function initIntensityWss() {
             // 握手成功不代表可用。改为HTTP拉取成功或收到推送数据后标记
             console.log("✅ 烈度速报WebSocket连接成功");
             intensityReconnectCount = 0;
+            intensityWsFailCount = 0;
             isIntensityInited = true;
             
             // 连接成功后重新初始化（通过HTTP获取最新数据）
@@ -1229,7 +1274,13 @@ function initIntensityWss() {
             
             // 更新NowQuake数据源状态（如果不是正常关闭）
             if (event.code !== 1000) {
+                intensityWsFailCount++;
                 updateDataSourceStatus('intensity', event.code, intensityReconnectCount);
+
+                // auto 模式：NowQuake 连续连接失败后切换到 Jian
+                if (getIntensitySourceMode() === "auto" && intensityWsFailCount >= 5 && !intensitySourceStopped) {
+                    switchIntensityToJian("NowQuake WebSocket连续连接失败");
+                }
             }
             
             clearInterval(intensityPingTimer);
@@ -1260,13 +1311,13 @@ function initIntensityWss() {
 function startTyphoonUpdateTimer() {
     if (typhoonUpdateTimer) clearInterval(typhoonUpdateTimer);
 
-    // 只在使用Wolfx或WHEWS数据源时启动定时更新
-    if (CONFIG.DATA_SOURCE !== "wolfx" && CONFIG.DATA_SOURCE !== "whews") {
+    // 只在使用Wolfx、WHEWS或Jian数据源时启动定时更新
+    if (CONFIG.DATA_SOURCE !== "wolfx" && CONFIG.DATA_SOURCE !== "whews" && CONFIG.DATA_SOURCE !== "jian") {
         return;
     }
 
     typhoonUpdateTimer = setInterval(async () => {
-        if (CONFIG.PAGE_ENABLED[5] && (CONFIG.DATA_SOURCE === "wolfx" || CONFIG.DATA_SOURCE === "whews")) {
+        if (CONFIG.PAGE_ENABLED[5] && (CONFIG.DATA_SOURCE === "wolfx" || CONFIG.DATA_SOURCE === "whews" || CONFIG.DATA_SOURCE === "jian")) {
             try {
                 console.log("🌀 定时更新台风数据...");
                 const typhoonData = await fetchTyphoonData();
@@ -1752,6 +1803,840 @@ function initWhewsWss() {
     console.log("✅ WHEWS数据源初始化完成");
 }
 
+// ==================== Jian Project API 支持 ====================
+
+/**
+ * 获取烈度速报数据源模式
+ * "auto"：优先 NowQuake，失败切换到 Jian
+ * "nowquake"：仅 NowQuake
+ * "jian"：仅 Jian
+ */
+function getIntensitySourceMode() {
+    const source = CONFIG.INTENSITY_SOURCE || "auto";
+    if (source === "nowquake" || source === "jian") return source;
+    return "auto";
+}
+
+/**
+ * 判断烈度速报当前是否实际使用 Jian
+ * 烈度速报独立配置，不跟随主数据源
+ */
+function isJianIntensitySource() {
+    return getIntensitySourceMode() === "jian" || intensityAutoJian;
+}
+
+/**
+ * auto 模式下从 NowQuake 切换到 Jian
+ */
+function switchIntensityToJian(reason) {
+    if (getIntensitySourceMode() !== "auto" || intensityAutoJian) return;
+
+    intensityAutoJian = true;
+    intensitySourceStopped = true;
+    intensityWsFailCount = 0;
+    if (intensityHttpTimer) {
+        clearTimeout(intensityHttpTimer);
+        intensityHttpTimer = null;
+    }
+    closeIntWss();
+    console.warn(`⚠️ ${reason}，自动切换到Jian烈度速报数据源`);
+    initJianIrWss();
+}
+
+/**
+ * 将 Jian 毫秒时间戳格式化为北京时间字符串
+ * 固定按 UTC+8 计算，避免 OBS 所在系统时区影响
+ * @param {number} ms - 毫秒时间戳
+ * @returns {string} - "YYYY-MM-DD HH:mm:ss"
+ */
+function formatJianTime(ms) {
+    const ts = Number(ms);
+    if (!ts) return "未知时间";
+    const date = new Date(ts + 8 * 60 * 60 * 1000);
+    if (isNaN(date.getTime())) return "未知时间";
+    const p = n => String(n).padStart(2, "0");
+    return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())} ${p(date.getUTCHours())}:${p(date.getUTCMinutes())}:${p(date.getUTCSeconds())}`;
+}
+
+/**
+ * 构建 Jian WebSocket 连接地址
+ * 浏览器 WebSocket 无法自定义请求头，因此通过查询参数携带访问令牌
+ * @param {string} path - 业务路径，如 /all、/cenc-ir
+ * @param {string} token - 访问令牌 at_
+ */
+function buildJianWsUrl(path, token) {
+    const host = (CONFIG.JIAN_WS_HOST || "wss://api.sismotide.top").replace(/\/+$/, "");
+    return `${host}${path}?key=${encodeURIComponent(token)}`;
+}
+
+/**
+ * 构建 Jian 烈度速报 WebSocket 地址
+ * 优先使用 INT_JIAN_WSS 完整地址；未配置时回退到 JIAN_WS_HOST + /cenc-ir
+ */
+function buildJianIrWsUrl(token) {
+    const configured = (CONFIG.INT_JIAN_WSS || "").trim();
+    if (configured) {
+        const sep = configured.includes("?") ? "&" : "?";
+        return `${configured}${sep}key=${encodeURIComponent(token)}`;
+    }
+    return buildJianWsUrl("/cenc-ir", token);
+}
+
+/**
+ * 调用 Jian 鉴权接口
+ * @param {string} path - 换票路径，如 /api/access
+ * @param {string} credential - 长期 Token（rt_）
+ */
+async function requestJianAuthToken(path, credential) {
+    const controller = new AbortController();
+    const timeoutTimer = setTimeout(() => controller.abort(), CONFIG.HTTP_TIMEOUT);
+    try {
+        const authHost = (CONFIG.JIAN_AUTH_HOST || "https://auth.sismotide.top").replace(/\/+$/, "");
+        const res = await fetch(`${authHost}${path}`, {
+            method: "GET",
+            headers: { "Authorization": `Bearer ${credential}` },
+            signal: controller.signal
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || data.ok !== true || !data.token) {
+            const err = new Error((data && data.message) || `Jian 鉴权请求失败（HTTP ${res.status}）`);
+            err.code = (data && data.code) || res.status;
+            throw err;
+        }
+        return data;
+    } finally {
+        clearTimeout(timeoutTimer);
+    }
+}
+
+/**
+ * 获取 Jian 访问令牌
+ * 使用长期 Token（rt_）换取短期访问令牌（at_），并缓存到过期前 5 分钟
+ * 未配置长期 Token 时使用配置中的临时访问令牌（at_）
+ * @param {boolean} force - 是否强制重新换取
+ * @returns {Promise<string>} - 访问令牌
+ */
+async function fetchJianAccessToken(force = false) {
+    const now = Date.now();
+    if (!force && jianAccessToken && now < jianAccessExpireAt - 5 * 60 * 1000) {
+        return jianAccessToken;
+    }
+    if (jianTokenPromise) return jianTokenPromise;
+
+    const refreshToken = (CONFIG.JIAN_REFRESH_TOKEN || "").trim();
+
+    if (!refreshToken) {
+        const err = new Error("Jian 未配置长期 Token，请在 config.js 填写 JIAN_REFRESH_TOKEN");
+        err.code = 4002;
+        throw err;
+    }
+
+    jianTokenPromise = (async () => {
+        const data = await requestJianAuthToken("/api/access", refreshToken);
+        jianAccessToken = data.token;
+        const expiresSec = Number(data.expires_after_sec) || 3600;
+        jianAccessExpireAt = Date.now() + expiresSec * 1000;
+        console.log(`✅ Jian 访问令牌已获取（约 ${Math.round(expiresSec / 60)} 分钟后过期）`);
+        return jianAccessToken;
+    })();
+
+    try {
+        return await jianTokenPromise;
+    } finally {
+        jianTokenPromise = null;
+    }
+}
+
+/**
+ * 处理 Jian 换票失败
+ * 令牌无效/账号封禁等不可恢复错误停止重连；网络类错误按指数退避重试
+ */
+function handleJianTokenError(err, source, retryFn) {
+    const code = Number(err && err.code) || 0;
+    const message = err && err.name === "AbortError"
+        ? "Jian 换票请求超时"
+        : ((err && err.message) || "Jian 换票失败");
+
+    console.error(`❌ ${message}（code=${code}）`);
+
+    const fatalCodes = [4002, 4005, 4006, 4201, 4202];
+    const hasCredential = !!CONFIG.JIAN_REFRESH_TOKEN;
+    const fatal = fatalCodes.includes(code) || !hasCredential;
+    if (fatal) {
+        jianAuthFailed = true;
+        dataSourceStatus[source] = {
+            connected: false,
+            errorType: ERROR_TYPES.CONNECTION_REFUSED,
+            errorMessage: message
+        };
+        showDataSourceError(source, ERROR_TYPES.CONNECTION_REFUSED, message);
+        return;
+    }
+
+    const attempt = source === "intensity" ? jianIrReconnectCount : jianAllReconnectCount;
+    const delay = Math.min(5000 * Math.pow(2, attempt), 60000);
+    console.warn(`⚠️ Jian 换票失败，${delay}ms 后重试`);
+    setTimeout(retryFn, delay);
+}
+
+/**
+ * 从 WebSocket 关闭事件中提取 Jian 鉴权错误码
+ * 服务端可能用自定义关闭码或 reason 文本携带 4xxx 错误码
+ */
+function parseJianCloseCode(event) {
+    if (!event) return 0;
+
+    // 实测鉴权失败时关闭码为 1008，稳定错误标识在 reason 中
+    const reasonMap = {
+        missing_api_key: 4001,
+        invalid_token_format: 4002,
+        invalid_api_key: 4003,
+        expired_access_token: 4004,
+        conn_limit: 4005,
+        account_banned: 4006,
+        invalid_refresh_token: 4201,
+        expired_refresh_token: 4202
+    };
+    const reasonKey = String(event.reason || "").trim();
+    if (reasonMap[reasonKey]) return reasonMap[reasonKey];
+
+    const knownCodes = new Set([4001, 4002, 4003, 4004, 4005, 4006, 4201, 4202]);
+    const candidates = [event.code, event.reason];
+    for (const c of candidates) {
+        const match = String(c || "").match(/(4[0-9]{3})/);
+        if (match && knownCodes.has(Number(match[1]))) return Number(match[1]);
+    }
+    return 0;
+}
+
+/**
+ * 处理 Jian WebSocket 鉴权类关闭
+ * @returns {boolean} - 是否为鉴权类错误（已处理）
+ */
+function handleJianAuthClose(source, event) {
+    const code = parseJianCloseCode(event);
+    const reason = String((event && event.reason) || "");
+
+    // 部分封禁关闭只给出 reason=banned，没有 4xxx 码
+    if (/banned/i.test(reason)) {
+        const message = "Jian IP 已被封禁，请等待解封或联系管理员";
+        jianAuthFailed = true;
+        dataSourceStatus[source] = {
+            connected: false,
+            errorType: ERROR_TYPES.CONNECTION_REFUSED,
+            errorMessage: message
+        };
+        showDataSourceError(source, ERROR_TYPES.CONNECTION_REFUSED, message);
+        console.error(`❌ ${message}，已停止重连`);
+        return true;
+    }
+
+    if (!code) return false;
+
+    const refreshableCodes = [4001, 4003, 4004];
+    const fatalCodes = [4002, 4005, 4006, 4201, 4202];
+    const messageMap = {
+        4001: "Jian 未携带访问令牌",
+        4002: "Jian 令牌格式错误",
+        4003: "Jian 访问令牌无效",
+        4004: "Jian 访问令牌已过期",
+        4005: "Jian 令牌并发连接已满",
+        4006: "Jian 账号已被封禁",
+        4201: "Jian 长期 Token 无效",
+        4202: "Jian 长期 Token 已过期"
+    };
+    const message = messageMap[code] || `Jian 鉴权失败（code ${code}）`;
+
+    if (refreshableCodes.includes(code) && CONFIG.JIAN_REFRESH_TOKEN && !fatalCodes.includes(code)) {
+        // 访问令牌过期/无效：清空缓存，下次重连自动换取新票
+        jianAccessToken = "";
+        jianAccessExpireAt = 0;
+        console.warn(`⚠️ ${message}，正在重新获取访问令牌`);
+        return true;
+    }
+
+    jianAuthFailed = true;
+    dataSourceStatus[source] = {
+        connected: false,
+        errorType: ERROR_TYPES.CONNECTION_REFUSED,
+        errorMessage: message
+    };
+    showDataSourceError(source, ERROR_TYPES.CONNECTION_REFUSED, message);
+    console.error(`❌ ${message}，已停止重连`);
+    return true;
+}
+
+/**
+ * 处理 Jian 服务端错误帧
+ * @param {Object} msg - 错误帧
+ * @param {string} source - 数据源标识（jian 或 intensity）
+ */
+function handleJianErrorFrame(msg, source = "jian") {
+    const code = Number(msg.code) || 0;
+    const message = msg.message || "Jian 服务端返回错误";
+    console.error(`❌ Jian 错误帧：${message}（code=${code}）`);
+
+    const refreshableCodes = [4001, 4003, 4004];
+    const fatalCodes = [4002, 4005, 4006, 4201, 4202];
+    const noRefreshToken = !CONFIG.JIAN_REFRESH_TOKEN;
+    const text = `${msg.message || ""} ${msg.error || ""}`;
+    // 部分错误帧不带 code，只能按 message 识别
+    const isBanned = /封禁|banned/i.test(text);
+    const isConnLimit = /超过服务器连接限制|conn_limit/i.test(text);
+    const isFatal = isBanned || isConnLimit || fatalCodes.includes(code) ||
+        (refreshableCodes.includes(code) && noRefreshToken);
+
+    if (isFatal) {
+        jianAuthFailed = true;
+        dataSourceStatus[source] = {
+            connected: false,
+            errorType: ERROR_TYPES.CONNECTION_REFUSED,
+            errorMessage: message
+        };
+        showDataSourceError(source, ERROR_TYPES.CONNECTION_REFUSED, message);
+        return;
+    }
+
+    // 访问令牌过期/无效：清空缓存，下次重连自动换取新票
+    if (refreshableCodes.includes(code)) {
+        jianAccessToken = "";
+        jianAccessExpireAt = 0;
+        console.warn(`⚠️ ${message}，下次重连将重新获取访问令牌`);
+    }
+}
+
+/**
+ * 创建 Jian 首连快照判定窗口
+ * 连接后 3 秒内收到的数据视为初始化快照，不触发强制显示
+ */
+function createJianInitWindow() {
+    const win = { done: false };
+    setTimeout(() => { win.done = true; }, 3000);
+    return win;
+}
+
+/**
+ * 关闭 Jian /all WebSocket 连接
+ */
+function closeJianAllWss() {
+    if (jianAllWebSocket) {
+        try {
+            jianAllWebSocket.close(1000, "Jian WSS主动关闭");
+            console.log("✅ Jian /all WebSocket已关闭");
+        } catch (err) {
+            console.error("关闭Jian /all WebSocket失败：", err);
+        } finally {
+            jianAllWebSocket = null;
+        }
+    }
+    if (jianAllPingTimer) {
+        clearInterval(jianAllPingTimer);
+        jianAllPingTimer = null;
+    }
+}
+
+/**
+ * 初始化 Jian /all 聚合 WebSocket 连接
+ * 该连接提供预警、台网测定、海啸、气象等公开源快照与增量（不含烈度速报）
+ */
+function initJianAllWss() {
+    if (jianAuthFailed) {
+        console.log("⚠️ Jian 鉴权失败，跳过 /all 连接");
+        return;
+    }
+    if (isConnectingJianAllWs) {
+        console.log("⚠️ Jian /all WebSocket正在连接中，跳过重复连接");
+        return;
+    }
+    if (jianAllWebSocket && jianAllWebSocket.readyState === 1) {
+        console.log("✅ Jian /all WebSocket已是活跃状态，跳过重新初始化");
+        return;
+    }
+
+    isConnectingJianAllWs = true;
+    closeJianAllWss();
+
+    fetchJianAccessToken().then(token => {
+        if (jianAuthFailed) {
+            isConnectingJianAllWs = false;
+            return;
+        }
+
+        const url = buildJianWsUrl("/all", token);
+        jianAllWebSocket = createWebSocket(url, {
+            onOpen: (socket) => {
+                isConnectingJianAllWs = false;
+                jianAllConnectedAt = Date.now();
+                // 重置去重缓存与初始化窗口
+                jianAllSeenMd5 = {};
+                jianAllInitWindow = createJianInitWindow();
+                console.log("✅ Jian /all WebSocket连接成功");
+
+                jianAllPingTimer = setInterval(() => {
+                    if (socket && socket.readyState === 1) {
+                        try {
+                            socket.send("ping");
+                        } catch (err) {
+                            console.error("发送Jian ping失败：", err);
+                            clearInterval(jianAllPingTimer);
+                            if (socket && socket.readyState !== 3) socket.close();
+                        }
+                    }
+                }, 30000);
+            },
+            onMessage: (e) => handleJianAllMessage(e),
+            onClose: (event) => {
+                isConnectingJianAllWs = false;
+                console.log(`Jian /all WebSocket关闭：${event.code} - ${event.reason}`);
+
+                if (jianAllConnectedAt && Date.now() - jianAllConnectedAt >= 60000) {
+                    jianAllReconnectCount = 0;
+                }
+                jianAllConnectedAt = 0;
+
+                if (handleJianAuthClose("jian", event)) {
+                    clearInterval(jianAllPingTimer);
+                    jianAllPingTimer = null;
+                    jianAllWebSocket = null;
+                    return;
+                }
+
+                if (event.code !== 1000) {
+                    updateDataSourceStatus("jian", event.code, jianAllReconnectCount);
+                }
+
+                clearInterval(jianAllPingTimer);
+                jianAllPingTimer = null;
+                jianAllWebSocket = null;
+            },
+            onError: () => {
+                isConnectingJianAllWs = false;
+            },
+            reconnectCallback: initJianAllWss,
+            reconnectCount: jianAllReconnectCount++
+        });
+
+        if (!jianAllWebSocket) {
+            isConnectingJianAllWs = false;
+        }
+    }).catch(err => {
+        isConnectingJianAllWs = false;
+        handleJianTokenError(err, "jian", initJianAllWss);
+    });
+
+    // 台风数据（Jian HTTP API）独立于 /all 推送，仅首次初始化一次
+    if (CONFIG.PAGE_ENABLED[5] && !isJianInited) {
+        setTimeout(async () => {
+            try {
+                console.log("🌀 正在获取台风数据（Jian Project台风API）...");
+                const typhoonData = await fetchTyphoonData();
+                if (typhoonData === null) {
+                    console.log("⚠️ 台风接口请求失败，跳过初始化显示");
+                } else {
+                    parseTyphoonData(typhoonData, "jian", true);
+                }
+                startTyphoonUpdateTimer();
+            } catch (err) {
+                console.error("初始化台风数据失败：", err);
+            }
+        }, 100);
+    }
+    isJianInited = true;
+}
+
+/**
+ * 处理 Jian /all 消息
+ * 首连为 {type:"all", "source：xxx":{Data,md5}} 快照，后续为单源信封
+ */
+function handleJianAllMessage(e) {
+    if (!e.data) return;
+    if (typeof e.data === "string") {
+        const text = e.data.trim();
+        // 心跳探测可能收到纯文本 ping/pong
+        if (!text || text === "ping" || text === "pong") return;
+        if (!text.startsWith("{") && !text.startsWith("[")) return;
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(e.data);
+    } catch (err) {
+        console.error("❌ Jian 数据解析失败：", err, "原始数据：", e.data);
+        return;
+    }
+
+    const messages = Array.isArray(parsed) ? parsed : [parsed];
+    messages.forEach(msg => handleJianEnvelope(msg));
+}
+
+/**
+ * 处理单条 Jian 信封消息
+ */
+function handleJianEnvelope(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "heartbeat" || msg.type === "pong") return;
+    // 鉴权错误帧可能不带 type，仅含 {ok:false, code, error, message}
+    if (msg.type === "error" || (msg.ok === false && msg.code)) {
+        handleJianErrorFrame(msg, "jian");
+        return;
+    }
+
+    // 首连快照：键名形如 source：cea / source:cea
+    if (msg.type === "all" && !msg.Data) {
+        Object.keys(msg).forEach(key => {
+            const match = key.match(/^source[：:](.+)$/);
+            if (!match) return;
+            const item = msg[key];
+            if (item && item.Data) {
+                dispatchJianSource(match[1].trim(), item.Data, item.md5 || "");
+            }
+        });
+        markDataSourceConnected("jian");
+        return;
+    }
+
+    if (!msg.Data) return;
+    dispatchJianSource(msg.type || "unknown", msg.Data, msg.md5 || "");
+}
+
+/**
+ * 按来源分发 Jian 业务数据
+ * @param {string} source - 源标识，如 cea/cenc/weather/nmefc-tsunami
+ * @param {Object} data - 业务数据
+ * @param {string} md5 - 服务端数据哈希
+ */
+function dispatchJianSource(source, data, md5) {
+    if (!data) return;
+
+    const isInitial = !(jianAllInitWindow && jianAllInitWindow.done);
+    const dedupKey = `${source}_${md5 || ""}_${data.id || ""}_${data.number ?? ""}_${data.originTime ?? ""}`;
+    if (jianAllSeenMd5[dedupKey]) return;
+    jianAllSeenMd5[dedupKey] = true;
+
+    // 收到任意有效业务帧即视为连通
+    markDataSourceConnected("jian");
+
+    switch (source) {
+        case "cea":
+        case "cea-pr":
+            handleJianCeaData(data, source, isInitial);
+            break;
+        case "cenc":
+        case "beijing":
+        case "yunnan":
+        case "shanxi":
+        case "ningxia":
+            handleJianMeasureData(data, source, isInitial);
+            break;
+        case "weather":
+            handleJianWeatherData(data);
+            break;
+        case "nmefc-tsunami":
+            handleJianTsunamiData(data, isInitial);
+            break;
+        default:
+            // 其他境外源当前页面不展示
+            break;
+    }
+}
+
+/**
+ * 处理 Jian CEA / CEA-PR 预警数据
+ */
+function handleJianCeaData(data, source, isInitial) {
+    if (!data || !data.id || !data.placeName || !data.magnitude) return;
+
+    console.log(`✅ 收到Jian CEA预警：${source} - ${data.placeName} ${data.magnitude}级（第${data.number || 1}报）`);
+
+    const adaptedData = {
+        id: data.id,
+        eventId: data.id,
+        placeName: data.placeName,
+        magnitude: data.magnitude,
+        shockTime: formatJianTime(data.originTime),
+        depth: data.depth,
+        // Jian CEA 不提供预计最大烈度，保留字段兼容
+        epiIntensity: data.epiIntensity ?? data.maxIntensity ?? "",
+        updates: data.number || data.updates || 1,
+        source: source === "cea-pr" ? "cea-pr" : "cea",
+        province: source === "cea-pr" ? (data.province || extractProvinceFromWhews(data.placeName)) : ""
+    };
+
+    parseAlertData(adaptedData, adaptedData.source, isInitial);
+}
+
+/**
+ * 处理 Jian CENC 及省级台网测定数据
+ */
+function handleJianMeasureData(data, source, isInitial) {
+    if (!data || !data.placeName || !data.magnitude) return;
+
+    console.log(`✅ 收到Jian ${source}台网测定：${data.placeName} ${data.magnitude}级`);
+
+    const adaptedData = {
+        id: data.id || "",
+        placeName: data.placeName,
+        magnitude: data.magnitude,
+        shockTime: formatJianTime(data.originTime),
+        depth: data.depth,
+        infoTypeName: data.infoTypeName || (source === "cenc" ? "测定" : ""),
+        maxIntensity: data.maxIntensity || "",
+        latitude: data.latitude,
+        longitude: data.longitude,
+        updateTime: data.updateTime || ""
+    };
+
+    parseMeasureData(adaptedData, source, isInitial);
+}
+
+/**
+ * 处理 Jian 气象预警数据
+ * 字段与 WHEWS 气象预警基本一致，补充生效/更新时间后复用现有渲染
+ */
+function handleJianWeatherData(data) {
+    if (!data || !data.id) return;
+
+    const adaptedData = {
+        ...data,
+        effective: data.originTime || data.effective || "",
+        updateTime: data.relieveTime || data.originTime || ""
+    };
+
+    handleWhewsWeatherData({ Data: adaptedData });
+}
+
+/**
+ * 处理 Jian 自然资源部海啸预警数据
+ * 适配为 parseTsunamiData 期望的结构
+ */
+function handleJianTsunamiData(data, isInitial) {
+    if (!data || !data.id) return;
+
+    const level = data.level || "";
+    const hasLevel = /红色|橙色|黄色|蓝色/.test(level);
+
+    const adaptedData = {
+        id: data.id,
+        code: data.headline || "",
+        warningInfo: {
+            title: `${hasLevel ? level : ""}${data.title || "海啸信息"}`,
+            level: level
+        },
+        details: { batch: data.number || 1 },
+        shockInfo: (data.magnitude !== undefined && data.magnitude !== null) ? {
+            shockTime: formatJianTime(data.originTime),
+            placeName: data.place || "未知位置",
+            magnitude: data.magnitude,
+            depth: data.depth,
+            latitude: data.latitude,
+            longitude: data.longitude
+        } : null,
+        timeInfo: { updateDate: formatJianTime(data.originTime) },
+        forecasts: [],
+        waterLevelMonitoring: [],
+        // 公报正文，parseTsunamiData 在无沿岸预报时优先展示该文本
+        description: data.description || ""
+    };
+
+    parseTsunamiData(adaptedData, "jian", isInitial);
+}
+
+/**
+ * 关闭 Jian /cenc-ir WebSocket 连接
+ */
+function closeJianIrWss() {
+    if (jianIrWebSocket) {
+        try {
+            jianIrWebSocket.close(1000, "Jian烈度速报WSS主动关闭");
+            console.log("✅ Jian /cenc-ir WebSocket已关闭");
+        } catch (err) {
+            console.error("关闭Jian /cenc-ir WebSocket失败：", err);
+        } finally {
+            jianIrWebSocket = null;
+        }
+    }
+    if (jianIrPingTimer) {
+        clearInterval(jianIrPingTimer);
+        jianIrPingTimer = null;
+    }
+}
+
+/**
+ * 初始化 Jian /cenc-ir 烈度速报 WebSocket 连接
+ */
+function initJianIrWss() {
+    if (jianAuthFailed) {
+        console.log("⚠️ Jian 鉴权失败，跳过 /cenc-ir 连接");
+        return;
+    }
+    if (!isJianIntensitySource()) {
+        console.log("⚠️ 当前烈度速报未使用Jian，跳过 /cenc-ir 连接");
+        return;
+    }
+    if (isConnectingJianIrWs) {
+        console.log("⚠️ Jian /cenc-ir WebSocket正在连接中，跳过重复连接");
+        return;
+    }
+    if (jianIrWebSocket && jianIrWebSocket.readyState === 1) {
+        console.log("✅ Jian /cenc-ir WebSocket已是活跃状态，跳过重新初始化");
+        return;
+    }
+
+    isConnectingJianIrWs = true;
+    closeJianIrWss();
+
+    fetchJianAccessToken().then(token => {
+        if (jianAuthFailed) {
+            isConnectingJianIrWs = false;
+            return;
+        }
+
+        const url = buildJianIrWsUrl(token);
+        jianIrWebSocket = createWebSocket(url, {
+            onOpen: (socket) => {
+                isConnectingJianIrWs = false;
+                jianIrConnectedAt = Date.now();
+                jianIrSeenMd5 = {};
+                jianIrInitWindow = createJianInitWindow();
+                console.log("✅ Jian /cenc-ir WebSocket连接成功");
+
+                jianIrPingTimer = setInterval(() => {
+                    if (socket && socket.readyState === 1) {
+                        try {
+                            socket.send("ping");
+                        } catch (err) {
+                            console.error("发送Jian烈度速报ping失败：", err);
+                            clearInterval(jianIrPingTimer);
+                            if (socket && socket.readyState !== 3) socket.close();
+                        }
+                    }
+                }, 30000);
+            },
+            onMessage: (e) => handleJianIrMessage(e),
+            onClose: (event) => {
+                isConnectingJianIrWs = false;
+                console.log(`Jian /cenc-ir WebSocket关闭：${event.code} - ${event.reason}`);
+
+                if (jianIrConnectedAt && Date.now() - jianIrConnectedAt >= 60000) {
+                    jianIrReconnectCount = 0;
+                }
+                jianIrConnectedAt = 0;
+
+                if (handleJianAuthClose("intensity", event)) {
+                    clearInterval(jianIrPingTimer);
+                    jianIrPingTimer = null;
+                    jianIrWebSocket = null;
+                    return;
+                }
+
+                if (event.code !== 1000) {
+                    updateDataSourceStatus("intensity", event.code, jianIrReconnectCount);
+                }
+
+                clearInterval(jianIrPingTimer);
+                jianIrPingTimer = null;
+                jianIrWebSocket = null;
+            },
+            onError: () => {
+                isConnectingJianIrWs = false;
+            },
+            reconnectCallback: initJianIrWss,
+            reconnectCount: jianIrReconnectCount++
+        });
+
+        if (!jianIrWebSocket) {
+            isConnectingJianIrWs = false;
+        }
+    }).catch(err => {
+        isConnectingJianIrWs = false;
+        handleJianTokenError(err, "intensity", initJianIrWss);
+    });
+}
+
+/**
+ * 处理 Jian /cenc-ir 消息
+ */
+function handleJianIrMessage(e) {
+    if (!e.data) return;
+    if (typeof e.data === "string") {
+        const text = e.data.trim();
+        if (!text || text === "ping" || text === "pong") return;
+        if (!text.startsWith("{")) return;
+    }
+
+    let msg;
+    try {
+        msg = JSON.parse(e.data);
+    } catch (err) {
+        console.error("❌ Jian 烈度速报解析失败：", err, "原始数据：", e.data);
+        return;
+    }
+
+    if (!msg || msg.type === "heartbeat" || msg.type === "pong") return;
+    // 鉴权错误帧可能不带 type，仅含 {ok:false, code, error, message}
+    if (msg.type === "error" || (msg.ok === false && msg.code)) {
+        handleJianErrorFrame(msg, "intensity");
+        return;
+    }
+    if (!msg.Data) return;
+
+    const data = msg.Data;
+    const dedupKey = `${msg.md5 || ""}_${data.id || ""}_${data.version ?? ""}_${data.originTime ?? ""}`;
+    if (jianIrSeenMd5[dedupKey]) return;
+    jianIrSeenMd5[dedupKey] = true;
+
+    markDataSourceConnected("intensity");
+    handleJianIrData(data, !(jianIrInitWindow && jianIrInitWindow.done));
+}
+
+/**
+ * 从 Jian 烈度速报的等值线或文字说明中提取推测最高烈度
+ * 实际推送无 maxIntensity 字段，烈度值在 contourGeoJson 的 INT 属性中
+ */
+function extractJianEstimatedIntensity(data) {
+    const features = data?.contourGeoJson?.features;
+    if (Array.isArray(features)) {
+        let max = 0;
+        features.forEach(feature => {
+            const value = Number(feature?.properties?.INT);
+            if (Number.isFinite(value) && value > max) max = value;
+        });
+        if (max > 0) return max;
+    }
+
+    const match = String(data?.intensityInfoText || "").match(/最高烈度(?:为)?\s*(\d+(?:\.\d+)?)\s*度/);
+    return match ? Number(match[1]) : 0;
+}
+
+/**
+ * 处理 Jian 烈度速报数据
+ * 适配为 parseIntensityData 期望的 NowQuake 结构
+ */
+function handleJianIrData(data, isInitial) {
+    if (!data || !data.id || !data.placeName) return;
+
+    console.log(`✅ 收到Jian烈度速报：${data.placeName} ${data.magnitude}级`);
+
+    // 兼容可能存在的仪器烈度字段；当前实际推送通常不含
+    const instrumentMax = Number(data.maxIntensity ?? data.intensity);
+
+    const adaptedData = {
+        eq_id: data.uniEventId || data.id,
+        happen_time: formatJianTime(data.originTime),
+        update_time: data.gmtPublish || formatJianTime(data.originTime),
+        hypocenter: data.placeName,
+        magnitude: Number(data.magnitude) || 0,
+        depth: (data.depth !== undefined && data.depth !== null) ? data.depth : "未知",
+        maxintensity: (Number.isFinite(instrumentMax) && instrumentMax > 0) ? instrumentMax : 0,
+        estimated_intensity: extractJianEstimatedIntensity(data),
+        maxforecastintensity: 0,
+        info: String(data.intensityInfoText || "").replace(/^\uFEFF/, "").replace(/\r/g, ""),
+        stations: []
+    };
+
+    parseIntensityData(adaptedData, isInitial);
+}
+
 // ==================== WHEWS 数据处理 ====================
 
 /**
@@ -2133,12 +3018,18 @@ function parseTsunamiData(data, source, isInitial = false) {
         shockInfo = `${shock.shockTime || "未知时间"} ${shock.placeName || "未知位置"} 发生<span class="highlight-num">${shock.magnitude || 0}</span>级地震，震源深度<span class="highlight-num">${shock.depth || "未知"}</span>公里，震中位于 ${shock.latitude || ""}°，${shock.longitude || ""}°`;
         if (forecast) {
             shockInfo += "。" + forecast;
+        } else if (data.description) {
+            // Jian 等数据源直接提供公报正文，优先展示，避免误判为“不会产生海啸”
+            shockInfo += "。" + data.description;
         } else {
             // 没有预警信息时添加提示
             shockInfo += "。本次地震事件预计不会产生海啸，或不会对我国沿岸造成重要影响。";
         }
     } else if (forecast) {
         shockInfo = forecast;
+    } else if (data.description) {
+        // 无震参但有公报正文时直接展示正文
+        shockInfo = data.description;
     } else {
         // 没有地震信息和预警信息时添加提示
         shockInfo = "本次地震事件预计不会产生海啸，或不会对我国沿岸造成重要影响。";
@@ -2688,24 +3579,41 @@ function handleOnlineEvent() {
     
     // 隐藏网络断开状态
     hideNetworkDisconnectedStatus();
-    
-    // 重置烈度速报失败状态（网络恢复后重新尝试）
-    if (intensitySourceStopped) {
-        console.log('✅ 网络恢复，重置烈度速报数据源状态');
-        intensitySourceStopped = false;
-        intensityReconnectCount = 0;
-    }
-    
+
     // 网络恢复时立即重置页面显示
     if (CONFIG.SHOW_NETWORK_STATUS) {
         resetPagesToDefault();
         resetIntensityPageToDefault();
     }
     
-    // 重连烈度速报数据源（NowQuake），主数据源由各WebSocket自身的重连机制处理
-    if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
-        console.log('正在重连NowQuake烈度速报WebSocket...');
+    // 重置烈度速报失败状态（网络恢复后重新尝试）
+    const intensityMode = getIntensitySourceMode();
+    if (intensityMode === "auto" && intensityAutoJian) {
+        // auto 模式曾切换到 Jian，网络恢复后重新优先 NowQuake
+        console.log('✅ 网络恢复，烈度速报重新优先 NowQuake');
+        intensityAutoJian = false;
+        intensitySourceStopped = false;
+        intensityReconnectCount = 0;
+        intensityHttpRetryCount = 0;
+        intensityWsFailCount = 0;
+        closeJianIrWss();
+        initIntensityHttp();
         initIntensityWss();
+    } else if (intensityMode === "jian") {
+        intensitySourceStopped = false;
+        if (!jianIrWebSocket || jianIrWebSocket.readyState === 3) {
+            console.log('正在重连Jian烈度速报WebSocket...');
+            initJianIrWss();
+        }
+    } else {
+        intensitySourceStopped = false;
+        intensityReconnectCount = 0;
+        intensityHttpRetryCount = 0;
+        intensityWsFailCount = 0;
+        if (!intensityWebSocket || intensityWebSocket.readyState === 3) {
+            console.log('正在重连NowQuake烈度速报WebSocket...');
+            initIntensityWss();
+        }
     }
 }
 
@@ -2856,13 +3764,16 @@ function updateDataSourceStatus(source, closeCode, reconnectCount) {
     let dataSourceName = '';
     switch (source) {
         case 'intensity':
-            dataSourceName = 'NowQuake烈度速报';
+            dataSourceName = isJianIntensitySource() ? 'Jian烈度速报' : 'NowQuake烈度速报';
             break;
         case 'wolfx':
             dataSourceName = 'Wolfx数据源';
             break;
         case 'whews':
             dataSourceName = 'WHEWS数据源';
+            break;
+        case 'jian':
+            dataSourceName = 'Jian数据源';
             break;
         default:
             dataSourceName = '数据源';
@@ -2957,6 +3868,16 @@ function showDataSourceError(source, errorType, message) {
                 if (CONFIG.PAGE_ENABLED[4]) renderHistoryData(4, false, message, "", PAGE_COLOR_MAP[4]);
             }
             break;
+
+        case 'jian':
+            // Jian /all 聚合端点影响：地震预警(0)、台网测定(1)、海啸预警(3)、气象预警(4)
+            if (errorType !== ERROR_TYPES.NORMAL_CLOSE) {
+                if (CONFIG.PAGE_ENABLED[0]) renderHistoryData(0, false, message);
+                if (CONFIG.PAGE_ENABLED[1]) renderHistoryData(1, false, message);
+                if (CONFIG.PAGE_ENABLED[3]) renderHistoryData(3, false, message, "", PAGE_COLOR_MAP[3]);
+                if (CONFIG.PAGE_ENABLED[4]) renderHistoryData(4, false, message, "", PAGE_COLOR_MAP[4]);
+            }
+            break;
     }
 }
 
@@ -2975,6 +3896,7 @@ function hideDataSourceError(source) {
     switch (source) {
         case 'intensity':
             lastIntensity = "";
+            jianIrSeenMd5 = {};
             if (CONFIG.PAGE_ENABLED[2]) {
                 renderHistoryData(2, false, "暂无烈度速报数据");
             }
@@ -2998,6 +3920,28 @@ function hideDataSourceError(source) {
             lastMeasure = "";
             lastTsunami = "";
             lastWeather = "";
+            if (CONFIG.PAGE_ENABLED[0]) {
+                renderHistoryData(0, false, "暂无地震预警数据");
+            }
+            if (CONFIG.PAGE_ENABLED[1]) {
+                renderHistoryData(1, false, "暂无台网测定数据");
+            }
+            if (CONFIG.PAGE_ENABLED[3]) {
+                renderHistoryData(3, false, "暂无海啸预警数据", "", PAGE_COLOR_MAP[3]);
+            }
+            if (CONFIG.PAGE_ENABLED[4]) {
+                dom.weatherTag.style.backgroundColor = PAGE_COLOR_MAP[4];
+                renderHistoryData(4, false, "暂无气象预警数据", "", PAGE_COLOR_MAP[4]);
+            }
+            break;
+
+        case 'jian':
+            alertStore = { lastShockTime: "", lastSource: "", lastTime: 0, lastProvince: "", lastUpdates: 0 };
+            measureDataCache = {};
+            lastMeasure = "";
+            lastTsunami = "";
+            lastWeather = "";
+            jianAllSeenMd5 = {};
             if (CONFIG.PAGE_ENABLED[0]) {
                 renderHistoryData(0, false, "暂无地震预警数据");
             }
@@ -3052,12 +3996,15 @@ function checkAllDataSourcesNetworkIssue() {
 
 /**
  * 获取当前实际启用的数据源列表
- * 主数据源二选一（wolfx/whews），烈度速报（intensity）始终启用
+ * 主数据源三选一（wolfx/whews/jian），烈度速报（intensity）始终启用
  * @returns {string[]} - 启用中的数据源标识数组
  */
 function getActiveDataSources() {
+    let mainSource = "wolfx";
+    if (CONFIG.DATA_SOURCE === "whews") mainSource = "whews";
+    if (CONFIG.DATA_SOURCE === "jian") mainSource = "jian";
     return [
-        CONFIG.DATA_SOURCE === "whews" ? "whews" : "wolfx",
+        mainSource,
         "intensity"
     ];
 }
@@ -3110,6 +4057,16 @@ window.onbeforeunload=()=>{
 
     // 清理WHEWS数据源
     closeAllWhewsWss();
+
+    // 清理Jian数据源
+    closeJianAllWss();
+    closeJianIrWss();
+    jianAllReconnectCount=0;
+    jianIrReconnectCount=0;
+    jianAccessToken="";
+    jianAccessExpireAt=0;
+    jianAllSeenMd5={};
+    jianIrSeenMd5={};
 
     // 清理网络状态监听器
     window.removeEventListener('online', handleOnlineEvent);

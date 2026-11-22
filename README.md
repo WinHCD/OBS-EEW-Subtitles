@@ -6,16 +6,17 @@
 
 ### 数据源支持
 
-项目支持两种主数据源：
+项目支持三种主数据源：
 
 - **Wolfx**：默认数据源
 - **WHEWS**：聚合数据源（需在 `config.js` 中配置鉴权令牌）
+- **Jian Project**：聚合数据源（在 `config.js` 填写 `JIAN_REFRESH_TOKEN` 长期 Token）
 
 台风信息页（台风实况）数据来自 Jian Project 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关。
 
 ### 核心功能
 
-* 多数据源支持，可在 Wolfx / WHEWS 之间切换
+* 多数据源支持，可在 Wolfx / WHEWS / Jian Project 之间切换
 * 实时展示地震预警、烈度速报、台风信息等信息
 * 可配置的台站筛选（默认距离≤50公里）
 * 页面开关功能，可根据需要启用或禁用特定页面
@@ -40,7 +41,10 @@
 ```javascript
 DATA_SOURCE: "wolfx"      // 使用Wolfx数据源（默认）
 DATA_SOURCE: "whews"      // 使用WHEWS数据源
+DATA_SOURCE: "jian"       // 使用Jian Project数据源
 ```
+
+烈度速报由 `INTENSITY_SOURCE` 独立配置，不跟随主数据源：`"auto"`（优先 NowQuake，失败自动切换 Jian）、`"nowquake"`（仅 NowQuake）、`"jian"`（仅 Jian）。
 
 ### 适配范围
 

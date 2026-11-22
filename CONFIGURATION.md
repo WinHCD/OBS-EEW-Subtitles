@@ -10,9 +10,12 @@
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
-| `DATA_SOURCE` | 主数据源选择 | `"wolfx"` | `"wolfx"`: 使用Wolfx数据源；`"whews"`: 使用WHEWS数据源 |
+| `DATA_SOURCE` | 主数据源选择 | `"wolfx"` | `"wolfx"`: Wolfx；`"whews"`: WHEWS；`"jian"`: Jian Project |
 | `WOLFX_WS_ALL` | Wolfx WebSocket 连接地址 | `wss://ws-api.wolfx.jp/all_eew` | Wolfx 数据源地址 |
 | `TYPHOON_API` | 台风实况API地址 | `https://api.sismotide.top/get/typhoon.php` | 台风信息页数据来源（Jian Project台风接口，与主数据源无关） |
+| `JIAN_WS_HOST` | Jian WebSocket 主机 | `wss://api.sismotide.top` | Jian 数据源地址 |
+| `JIAN_AUTH_HOST` | Jian 换票地址 | `https://auth.sismotide.top` | 需与 `JIAN_WS_HOST` 对应 |
+| `JIAN_REFRESH_TOKEN` | Jian 长期 Token | `""` | 格式 `rt_xxxxxxxx`，有效期约 180 天。换取：`GET https://auth.sismotide.top/api/refresh?key=lk_你的登录密钥`，返回的 `token` 字段即长期 Token。程序会自动换取访问令牌并续期 |
 | `WHEWS_TOKEN` | WHEWS WAuth 连接令牌 | `""` | 格式 `wat_xxxxxxxx`，在 <https://auth.beecld.com> 获取。缺失或无效时连接以关闭码 `4401` 断开并停止重连 |
 | `WHEWS_WS_ALL` | WHEWS 聚合 WebSocket 地址 | `wss://api.2v8.cn/ws/all` | 包含 CEA/CEA-PR/CENC/海啸/气象，不含台风 |
 
@@ -20,10 +23,11 @@
 
 | 配置项 | 说明 | 默认值 | 备注 |
 |--------|------|--------|------|
-| `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | 烈度速报仅支持 NowQuake，`"auto"` 与 `"nowquake"` 行为一致 |
+| `INTENSITY_SOURCE` | 烈度速报数据源选择 | `"auto"` | `"auto"`: 优先 NowQuake，连接失败自动切换 Jian（推荐）；`"nowquake"`: 仅 NowQuake；`"jian"`: 仅 Jian |
 | `INT_HTTP_LASTID` | NowQuake烈度速报 HTTP 接口 - 获取最新事件 ID | `https://api-cencint-public.nowquake.cn/lastid` | 仅 NowQuake 使用 |
 | `INT_HTTP_EVENT` | NowQuake烈度速报 HTTP 接口 - 获取事件详情 | `https://api-cencint-public.nowquake.cn/event/` | 仅 NowQuake 使用 |
 | `INT_WSS_REAL` | NowQuake烈度速报 WebSocket 接口 - 实时数据 | `wss://api-cencint-public.nowquake.cn/websocket` | 用于获取烈度速报的实时数据 |
+| `INT_JIAN_WSS` | Jian 烈度速报 WebSocket 地址 | `wss://api.sismotide.top/cenc-ir` | 仅 `INTENSITY_SOURCE` 为 `jian`，或 `auto` 切换到 Jian 后使用 |
 
 ### 3. 显示参数配置
 
@@ -110,11 +114,13 @@
 ### 数据源配置
 - 不同数据源提供的数据范围有所不同，请根据实际需求选择
 - 修改数据源地址时，请确保新的地址提供与原地址相同格式的数据，否则可能导致数据解析失败
-- 烈度速报仅支持 NowQuake 数据源（`INTENSITY_SOURCE` 的 `"auto"` 与 `"nowquake"` 行为一致）
-- NowQuake 数据源无法连接时，系统将停止重连并显示相应提示
+- 烈度速报支持 `"auto"`（优先 NowQuake，连接失败自动切换 Jian）、`"nowquake"`（仅 NowQuake）、`"jian"`（仅 Jian），独立配置，不跟随主数据源
+- NowQuake 连接失败时：`"auto"` 模式自动切换到 Jian；`"nowquake"` 模式停止重连并显示提示
 - `MAX_WS_RECONNECT` 设置为 `0` 时，WebSocket 连接将无限重连；设置为大于 0 的值时，达到该次数后停止重连
 - 台风信息页（台风实况）数据来自 Jian Project 台风 HTTP 接口（`TYPHOON_API`），与主数据源无关
 - WHEWS 数据源需要先配置 `WHEWS_TOKEN`（WAuth 连接令牌），否则连接以 `4401` 关闭并停止重连
+- Jian 数据源需要配置 `JIAN_REFRESH_TOKEN`（长期 Token），脚本会自动换取约 1 小时有效的访问令牌并续期
+- Jian 的 `/all` 聚合流不含烈度速报，项目会额外建立一路 `/cenc-ir` 连接；一个长期 Token 默认最多 3 路并发
 
 ### 显示参数
 - `SCROLL_SPEED` 过高可能导致文本滚动过快，影响阅读
@@ -150,11 +156,17 @@ const CONFIG = {
     WHEWS_TOKEN: "",
     WHEWS_WS_ALL: "wss://api.2v8.cn/ws/all",
 
+    // Jian Project 数据源配置（使用 DATA_SOURCE: "jian" 时生效）
+    JIAN_WS_HOST: "wss://api.sismotide.top",
+    JIAN_AUTH_HOST: "https://auth.sismotide.top",
+    JIAN_REFRESH_TOKEN: "",
+
     // 烈度速报配置
     INTENSITY_SOURCE: "auto",
     INT_HTTP_LASTID: "https://api-cencint-public.nowquake.cn/lastid",
     INT_HTTP_EVENT: "https://api-cencint-public.nowquake.cn/event/",
     INT_WSS_REAL: "wss://api-cencint-public.nowquake.cn/websocket",
+    INT_JIAN_WSS: "wss://api.sismotide.top/cenc-ir",
 
     // 显示参数配置
     SCROLL_SPEED: 120,

@@ -1,7 +1,7 @@
 // 配置文件
 const CONFIG = {
     // ==================== 数据源配置 ====================
-    // 主数据源选择: "wolfx" 或 "whews"
+    // 主数据源选择: "wolfx"、"whews" 或 "jian"
     DATA_SOURCE: "wolfx",
 
     // Wolfx WebSocket地址
@@ -9,6 +9,16 @@ const CONFIG = {
 
     // 台风实况API地址（Jian Project提供，台风信息页数据来源，与主数据源无关）
     TYPHOON_API: "https://api.sismotide.top/get/typhoon.php",
+
+    // ---- Jian Project API 配置 ----
+    // WebSocket 主机
+    JIAN_WS_HOST: "wss://api.sismotide.top",
+
+    // 换票地址
+    JIAN_AUTH_HOST: "https://auth.sismotide.top",
+
+    // Jian 长期 Token（格式: rt_xxxxxxxx，用登录密钥换取: https://auth.sismotide.top/api/refresh?key=lk_xxxxxxxx）
+    JIAN_REFRESH_TOKEN: "",
 
     // ---- WHEWS API 配置 ----
     // WHEWS 鉴权令牌（格式: wat_xxxxxxxx，在 https://auth.beecld.com 获取）
@@ -18,7 +28,11 @@ const CONFIG = {
     WHEWS_WS_ALL: "wss://api.2v8.cn/ws/all",
 
     // ==================== 烈度速报配置 ====================
-    // 烈度速报数据源: "nowquake" - 使用NowQuake（目前唯一支持）
+    // 烈度速报数据源选择:
+    // "auto" - 优先 NowQuake，连接失败自动切换 Jian（推荐）
+    // "nowquake" - 仅使用 NowQuake
+    // "jian" - 仅使用 Jian
+    // 独立配置，不跟随主数据源
     INTENSITY_SOURCE: "auto",
 
     // NowQuake烈度速报HTTP接口 - 获取最新事件ID
@@ -29,6 +43,9 @@ const CONFIG = {
 
     // NowQuake烈度速报WebSocket接口 - 实时数据
     INT_WSS_REAL: "wss://api-cencint-public.nowquake.cn/websocket",
+
+    // Jian烈度速报WebSocket地址（鉴权使用上方 JIAN_AUTH_HOST）
+    INT_JIAN_WSS: "wss://api.sismotide.top/cenc-ir",
 
     // ==================== 显示参数配置 ====================
     // 滚动速度（像素/秒）
